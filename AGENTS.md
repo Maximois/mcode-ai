@@ -14,6 +14,19 @@ Así siempre existe un punto al que volver si algo sale mal.
 
 Nunca borres historial (`push --force`, `reset` sobre commits ya subidos, `rebase` de commits publicados) sin que el usuario lo pida de forma explícita.
 
+## FLUJO OBLIGATORIO para cualquier cambio de código
+
+Nunca des algo por terminado solo porque lo editaste. Seguí siempre estos pasos:
+
+1. **Planear.** Antes de tocar nada, escribí un plan corto: qué vas a cambiar, en qué archivos y cómo vas a comprobar que quedó bien. Si el cambio es grande o riesgoso, mostrá el plan y esperá el visto bueno.
+2. **Checkpoint.** Hacé el commit de la REGLA DE ORO.
+3. **Editar** solo lo que el plan indica. No "mejores" cosas que nadie pidió.
+4. **Verificar de verdad.** Corré `npm run verify` (sintaxis de `electron/` + build de vite). Para cambios muy chicos podés usar `npm run verify -- --quick`, pero antes de dar por cerrada una tarea corré la versión completa.
+5. **Si falla: leé el error, repará y volvé a verificar.** Repetí hasta que pase. Si después de 3 intentos sigue fallando, o cada arreglo rompe otra cosa, **frená**: volvé al checkpoint (`git reset --hard HEAD`) y explicá qué pasó en vez de seguir apilando parches.
+6. **Revisar lo que no cubre el build.** El build no detecta errores en ejecución (ventanas de Electron, IPC, procesos). Si tocaste `electron/main.js`, `preload.js` o algo que depende de la app corriendo, revisá a mano el flujo afectado (por ejemplo: eventos que se disparan al cerrar ventanas o al salir de la app) y, si podés, ejecutá la app.
+7. **Reportar con honestidad:** qué verificaste y con qué resultado, y qué NO pudiste verificar. Está prohibido decir "listo" o "funciona" sin haber corrido el paso 4.
+8. **Commit** del cambio ya verificado, con mensaje claro.
+
 ## Qué NO se sube nunca a git
 
 - Paquetes y binarios: `*.vsix`, `*.zip`, `*.exe`, `*.msi`, `*.dll`, `*.node`, `*.db`, `*.sqlite`
