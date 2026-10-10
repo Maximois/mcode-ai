@@ -2021,3 +2021,44 @@ body {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
+
+/* ── Mapa del proyecto (panel lateral) ── */
+.sidebar-tabs { display: flex; gap: 2px; padding: 0 8px 6px; }
+.sidebar-tab { flex: 1; background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--text-3); font: inherit; font-size: 11px; padding: 5px 0; cursor: pointer; }
+.sidebar-tab:hover { color: var(--text); }
+.sidebar-tab.active { color: var(--accent-2); border-bottom-color: var(--accent); }
+.pmap { display: flex; flex-direction: column; gap: 8px; padding: 0 8px 10px; overflow-y: auto; min-height: 0; flex: 1; font-size: 11px; }
+.pmap-empty { padding: 14px 10px; color: var(--text-3); font-size: 11px; }
+.pmap-stats { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--text-2); }
+.pmap-stats b { color: var(--text); font-weight: 600; }
+.pmap-search { background: var(--bg-3); border: 1px solid var(--border-2); border-radius: var(--radius); color: var(--text); font: inherit; font-size: 11px; padding: 5px 8px; outline: none; }
+.pmap-search:focus { border-color: var(--accent); }
+.pmap-legend { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--text-3); font-size: 10px; }
+.pmap-legend i, .pmap-sym i { font-style: normal; display: inline-grid; place-items: center; width: 13px; height: 13px; border-radius: 3px; background: var(--bg-5); color: var(--accent-2); font-size: 9px; margin-right: 4px; }
+.pmap-modules { display: flex; flex-direction: column; gap: 6px; }
+.pmap-module { background: var(--bg-3); border: 1px solid var(--border); border-left: 3px solid var(--pm); border-radius: var(--radius); }
+.pmap-module-head { display: flex; align-items: center; gap: 7px; width: 100%; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 11px; font-weight: 600; padding: 7px 8px; cursor: pointer; text-align: left; }
+.pmap-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pm); flex: none; }
+.pmap-module-name { flex: 1; }
+.pmap-count { background: var(--bg-5); color: var(--text-2); border-radius: 8px; padding: 0 6px; font-weight: 400; }
+.pmap-chev { color: var(--text-3); }
+.pmap-hint { padding: 0 9px 5px 22px; color: var(--text-3); font-size: 10px; }
+.pmap-files { list-style: none; margin: 0; padding: 0 4px 5px; }
+.pmap-file-head { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "n l" "b b"; gap: 2px 8px; width: 100%; background: transparent; border: 0; border-radius: 4px; color: var(--text); font: inherit; font-size: 11px; padding: 4px 5px; cursor: pointer; text-align: left; }
+.pmap-file-head:hover { background: var(--bg-4); }
+.pmap-file-name { grid-area: n; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmap-file-lines { grid-area: l; color: var(--text-3); }
+.pmap-bar { grid-area: b; height: 2px; background: var(--bg-5); border-radius: 2px; overflow: hidden; }
+.pmap-bar span { display: block; height: 100%; border-radius: 2px; opacity: .85; }
+.pmap-file-body { padding: 4px 6px 8px; display: flex; flex-direction: column; gap: 6px; }
+.pmap-summary { color: var(--text); line-height: 1.4; }
+.pmap-path { color: var(--text-3); font-size: 10px; word-break: break-all; }
+.pmap-syms { display: flex; flex-wrap: wrap; gap: 3px; }
+.pmap-sym { display: inline-flex; align-items: center; background: var(--bg-4); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font: inherit; font-size: 10px; padding: 1px 5px 1px 2px; cursor: pointer; }
+.pmap-sym:hover { border-color: var(--accent); }
+.pmap-sym em { font-style: normal; color: var(--text-3); margin-left: 5px; }
+.pmap-k-component i { color: var(--blue); } .pmap-k-hook i { color: #c678dd; } .pmap-k-class i { color: var(--yellow); } .pmap-k-ipc i { color: var(--green); }
+.pmap-rel { color: var(--text-2); font-size: 10px; line-height: 1.5; }
+.pmap-rel b { color: var(--text-3); font-weight: 500; margin-right: 4px; }
+.pmap-open { align-self: flex-start; background: var(--bg-5); border: 1px solid var(--border-2); border-radius: 4px; color: var(--text); font: inherit; font-size: 10px; padding: 3px 8px; cursor: pointer; }
+.pmap-open:hover { border-color: var(--accent); color: var(--accent-2); }

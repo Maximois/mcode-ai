@@ -14,6 +14,7 @@ import { formatDestripeLogLine, formatDestripeMarkdown, fetchLiveWebSnapshots } 
 import DevPanel from './DevPanel.jsx'
 import ReverseIntelPanel from './ReverseIntelPanel.jsx'
 import ExtensionManager from './ExtensionManager.jsx'
+import ProjectMap from './ProjectMap.jsx'
 import { WorkCard, WorkSummary } from './WorkCard.jsx'
 import Editor from './Editor.jsx'
 
@@ -1693,6 +1694,7 @@ function App() {
   const [showSettings,        setShowSettings]   = useState(false)
   const [showExtensions,      setShowExtensions]  = useState(false)
   const [showSidebar,   setShowSidebar] = useState(false)
+  const [sidebarTab,    setSidebarTab]  = useState('files')
   const [showChat,      setShowChat]    = useState(false)
   const [showTerminal,  setShowTerminal]= useState(false)
   const [bottomTab,     setBottomTab]   = useState('terminal') // 'terminal' | 'dev' | 'reverse'
@@ -2676,11 +2678,17 @@ function App() {
         {showSidebar && (
           <div className="sidebar">
             <div className="sidebar-header">
-              <span className="panel-label">EXPLORADOR</span>
+              <span className="panel-label">{sidebarTab === 'map' ? 'MAPA' : 'EXPLORADOR'}</span>
               {rootDir && <span className="sidebar-root">{rootDir.split(/[\\/]/).pop()}</span>}
             </div>
-            <FileTree rootDir={rootDir} onOpen={openDiskFile} onOpenInBrowser={openPreviewInBrowser} activeFilePath={activeTab?.filePath} />
-            {projectTools && (
+            <div className="sidebar-tabs" role="tablist">
+              <button role="tab" aria-selected={sidebarTab === 'files'} className={`sidebar-tab ${sidebarTab === 'files' ? 'active' : ''}`} onClick={() => setSidebarTab('files')}>Archivos</button>
+              <button role="tab" aria-selected={sidebarTab === 'map'} className={`sidebar-tab ${sidebarTab === 'map' ? 'active' : ''}`} onClick={() => setSidebarTab('map')}>Mapa</button>
+            </div>
+            {sidebarTab === 'map'
+              ? <ProjectMap projectFiles={projectFiles} rootDir={rootDir} onOpen={openDiskFile} />
+              : <FileTree rootDir={rootDir} onOpen={openDiskFile} onOpenInBrowser={openPreviewInBrowser} activeFilePath={activeTab?.filePath} />}
+            {sidebarTab === 'files' && projectTools && (
               <div className="project-tools">
                 <div className="project-tools-header">Herramientas de proyecto</div>
                 {projectTools.map((tool, idx) => (
