@@ -26,9 +26,10 @@ export function normalizeTools(text) {
     // toolname: args (ej: "readFile:Cargo.toml" o "run: cargo check")
     .replace(new RegExp('(?:^|\\n)\\s*(' + _toolNames + ')\\s*:\\s*(.+?)(?=\\n|$)', 'gim'), (m, cmd, args) => '\n[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
     // TOOL: cmd args (texto suelto sin [corchetes], con/sin backticks)
-    .replace(new RegExp('`*TOOL:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
+    // OJO: (?<!\[) y [^\]] evitan reenvolver un [TOOL: ...] ya correcto (antes dejaba [[TOOL: ...]] y sobraba un "[]")
+    .replace(new RegExp('(?<!\\[)`*TOOL:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`\\]]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
     // TOC: cmd args (texto suelto, typo "TOC")
-    .replace(new RegExp('`*TOC:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
+    .replace(new RegExp('(?<!\\[)`*TOC:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`\\]]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
     // [TOC: cmd args] → [TOOL: cmd args]
     .replace(new RegExp('\\[TOC:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\]]+)\\]', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
 }
@@ -1376,6 +1377,17 @@ async function callOpenAI({ baseUrl, apiKey, model, messages, signal, onChunk, e
   return text
 }
 
+// Motivo (si lo hay) por el que la ultima llamada a Gemini no trajo texto
+let _lastGeminiDiag = null
+
+// Respuesta "vacia" en la practica: nada, o solo corchetes/puntos/signos (ej. "[]", "[...]", "{}")
+function isDegenerateReply(text) {
+  const t = String(text ?? '').trim()
+  if (!t) return true
+  if (/^[\s\[\](){}.\u2026\u00b7\-\u2013\u2014_*#"'`]*$/.test(t)) return true
+  return /^(null|undefined|none|n\/a)$/i.test(t)
+}
+
 async function callGemini({ apiKey, model, messages, signal, onChunk, imageBase64 }) {
   // Concatenar TODOS los system messages en uno solo (Gemini solo acepta 1 systemInstruction)
   const allSys = messages.filter(m => m.role === 'system').map(m => m.content).filter(Boolean)
@@ -1399,10 +1411,22 @@ async function callGemini({ apiKey, model, messages, signal, onChunk, imageBase6
     ...(sys ? { systemInstruction: { parts: [{ text: sys }] } } : {}),
     generationConfig: { maxOutputTokens: 8192 },
   }
-  return doStream(url, {}, body, signal, onChunk, l => {
+  _lastGeminiDiag = null
+  const result = await doStream(url, {}, body, signal, onChunk, l => {
     if (!l.startsWith('data: ')) return ''
-    try { return JSON.parse(l.slice(6)).candidates?.[0]?.content?.parts?.[0]?.text || '' } catch { return '' }
+    try {
+      const j = JSON.parse(l.slice(6))
+      // Registrar por qué puede venir vacío (bloqueo de seguridad, tope de tokens, etc.)
+      if (j.promptFeedback?.blockReason) _lastGeminiDiag = `Gemini bloqueó el pedido: ${j.promptFeedback.blockReason}`
+      const fr = j.candidates?.[0]?.finishReason
+      if (fr && fr !== 'STOP') _lastGeminiDiag = `finishReason: ${fr}`
+      // Unir TODAS las partes de texto (antes solo se leía la primera) y saltar las de "pensamiento"
+      const parts = j.candidates?.[0]?.content?.parts || []
+      return parts.filter(pt => typeof pt.text === 'string' && !pt.thought).map(pt => pt.text).join('')
+    } catch { return '' }
   })
+  if (!result?.trim() && !_lastGeminiDiag) _lastGeminiDiag = 'Gemini no devolvió texto'
+  return result
 }
 
 async function callMistral({ apiKey, model, messages, signal, onChunk, tools, onToolCalls }) {
@@ -1695,6 +1719,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
   }
 
   let finalMessages = messages
+  let lastCallMessages = messages   // ultimos mensajes enviados al modelo (para reintentar con el mismo contexto)
 
   // ── Smart Pipeline: solo sin imagen (Gemini ve la imagen directo) ──
   if (!imageBase64 && projectFiles && Object.keys(projectFiles).length > 0 && provider === 'gemini') {
@@ -1739,6 +1764,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
   const supportsNativeTools = provider !== 'ollama' && provider !== 'gemini' && provider !== 'zen+gemini'
 
   const makeProviderCall = async (msgs, toolCb, useRetry = true, overrideImage, useTools = false) => {
+    lastCallMessages = msgs
     nativeToolCalls = null
     currentRoundReasoning = null   // reset per-round reasoning cada vez que llamamos al provider
     const img = overrideImage || imageBase64
@@ -1953,7 +1979,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
 
     const followUpMessages = [
       ...finalMessages,
-      { role: 'assistant', content: cleanResponse || '[...]' },
+      { role: 'assistant', content: cleanResponse || `Consulté con herramientas: ${matches.map(m => m[1]).join(', ')}.` },
       { role: 'user', content: `Datos solicitados de los archivos:\n${toolResults.join('\n\n')}\n\nAhora completá tu respuesta con esta información. Sé completo y detallado.` }
     ]
 
@@ -1991,14 +2017,39 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
   if (TOOL_RE.test(finalRaw)) {
     const wrapUpMessages = [
       ...finalMessages,
-      { role: 'assistant', content: finalRaw.replace(TOOL_RE, '').trim() || '[...]' },
+      { role: 'assistant', content: finalRaw.replace(TOOL_RE, '').trim() || 'Seguí consultando herramientas para resolverlo.' },
       { role: 'user', content: 'Completá tu respuesta final sin usar [TOOL:]. Dá la solución completa directamente.' }
     ]
     toolAwareOnChunk.reset()
     response = await makeProviderCall(wrapUpMessages, toolAwareOnChunk, false)
   }
 
-  return normalizeTools(response).replace(TOOL_RE, '').trim()
+  let finalText = normalizeTools(response).replace(TOOL_RE, '').trim()
+
+  // Respuesta vacía o solo "[]": reintentar UNA vez con el mismo contexto + un pedido explícito;
+  // si sigue vacía, decirlo en pantalla (antes el agente quedaba mudo y sin hacer nada).
+  if (isDegenerateReply(finalText) && !signal?.aborted) {
+    const nudge = 'Tu respuesta anterior llegó vacía o solo con corchetes. Respondé AHORA de forma concreta a mi pedido: explicá en pocas líneas qué hacés y, si hay que modificar archivos, incluí los bloques PATCH/WRITE/CREATE completos. No contestes con corchetes, "[]" ni texto vacío.'
+    const base = lastCallMessages || finalMessages
+    const li = base.map(m => m.role).lastIndexOf('user')
+    const retryMessages = li >= 0 && typeof base[li].content === 'string'
+      ? base.map((m, i) => i === li ? { ...m, content: m.content + '\n\n' + nudge } : m)
+      : [...base, { role: 'user', content: nudge }]
+    onChunk?.('◉ La respuesta llegó vacía, reintentando…', '◉ La respuesta llegó vacía, reintentando…')
+    toolAwareOnChunk.reset()
+    try {
+      response = await makeProviderCall(retryMessages, toolAwareOnChunk, false)
+      finalText = normalizeTools(response).replace(TOOL_RE, '').trim()
+    } catch (e) {
+      if (e?.name === 'AbortError' || /cancelado/i.test(e?.message || '')) throw e
+    }
+    if (isDegenerateReply(finalText)) {
+      const why = provider === 'gemini' || provider === 'zen+gemini' ? _lastGeminiDiag : null
+      finalText = `⚠️ ${provName} devolvió una respuesta vacía${why ? ` (${why})` : ''} aunque se reintentó. No se hizo ningún cambio. Probá de nuevo, reformulá el pedido o cambiá de modelo.`
+      onChunk?.(finalText, finalText)
+    }
+  }
+  return finalText
 }
 
 // ── Índice del proyecto (solo nombres + métricas, sin contenido) ──────────────

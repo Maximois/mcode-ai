@@ -33,6 +33,14 @@ for (const f of files) {
 }
 if (!failed) console.log('  OK')
 
+// 1b) Pruebas del parser de herramientas del agente (regresion del bug de "[]" vacio)
+console.log('[1b] Parser de herramientas (src/ai.js)')
+{
+  const r = spawnSync(process.execPath, ['--no-warnings', join(root, 'scripts', 'test-tools.mjs')], { encoding: 'utf8' })
+  if (r.status !== 0) { failed++; console.error((r.stderr || r.stdout || '').trim().split('\n').slice(-10).join('\n')) }
+  else console.log((r.stdout || '').trimEnd())
+}
+
 // 2) Build real del renderer (detecta errores de JSX, imports rotos, etc.)
 if (quick) {
   console.log('[2/2] Build de vite: omitido (--quick)')
