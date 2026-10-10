@@ -57,3 +57,31 @@ coverage/
 # Local development
 dist-dev/
 *.tar.gz
+
+# Binarios y paquetes (nunca subir: pesan y no son código fuente)
+*.vsix
+*.zip
+*.7z
+*.rar
+*.msi
+*.dll
+*.pdb
+*.node
+*.sqlite
+*.db
+
+# Datos de agentes / herramientas locales
+.claude/settings.local.json
+.roo/
+.cline/
+.continue/
+.aider*
+.cursor/
+.windsurf/
+
+# Credenciales y claves (nunca subir)
+*.pem
+*.key
+*.pfx
+*.p12
+secrets.*

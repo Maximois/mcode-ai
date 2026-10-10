@@ -15,3 +15,7 @@
 *.exe binary
 *.dll binary
 *.pak binary
+
+# Scripts de Windows necesitan CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
