@@ -5,8 +5,12 @@
 
 // ── Tool calling (text-based, any provider) ───────────────────────────────────
 const _toolNames = '(?:run|readFile|searchProject|listDir|glob|grep|searchWeb|fetchURL|git|createPlan|updatePlan|listPlans|undo|tree|review|rename|createComponent|changelog|learn|remember|experience|timeline|screenshot)'
+const _toolAlt = _toolNames.slice(3, -1)   // 'run|readFile|...' (sin "(?:" ni ")")
 
-export const TOOL_RE = new RegExp('\\[(?:TOOL|TOC):\\s*' + _toolNames + '(?:\\s+([^\\]]*))?\\]', 'gi')
+// Grupos: m[1] = nombre de la herramienta, m[2] = argumentos.
+// (Antes el nombre estaba en un grupo NO capturante: m[1] eran los argumentos y executeToolCall recibia
+//  "[Herramienta desconocida: <args>]" -> las herramientas por texto nunca se ejecutaban.)
+export const TOOL_RE = new RegExp('\\[(?:TOOL|TOC):\\s*(' + _toolAlt + ')(?:\\s+([^\\]]*))?\\]', 'gi')
 
 // Normaliza formatos alternativos a [TOOL: ...]
 export function normalizeTools(text) {
@@ -27,11 +31,11 @@ export function normalizeTools(text) {
     .replace(new RegExp('(?:^|\\n)\\s*(' + _toolNames + ')\\s*:\\s*(.+?)(?=\\n|$)', 'gim'), (m, cmd, args) => '\n[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
     // TOOL: cmd args (texto suelto sin [corchetes], con/sin backticks)
     // OJO: (?<!\[) y [^\]] evitan reenvolver un [TOOL: ...] ya correcto (antes dejaba [[TOOL: ...]] y sobraba un "[]")
-    .replace(new RegExp('(?<!\\[)`*TOOL:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`\\]]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
+    .replace(new RegExp('(?<!\\[)`*TOOL:\\s*(' + _toolAlt + ')\\s+([^\\n`\\]]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
     // TOC: cmd args (texto suelto, typo "TOC")
-    .replace(new RegExp('(?<!\\[)`*TOC:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`\\]]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
+    .replace(new RegExp('(?<!\\[)`*TOC:\\s*(' + _toolAlt + ')\\s+([^\\n`\\]]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
     // [TOC: cmd args] → [TOOL: cmd args]
-    .replace(new RegExp('\\[TOC:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\]]+)\\]', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
+    .replace(new RegExp('\\[TOC:\\s*(' + _toolAlt + ')\\s+([^\\]]+)\\]', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
 }
 
 // ── Native function calling schemas (OpenAI-compatible providers) ──────────
@@ -1526,7 +1530,14 @@ Resultados completos:`
 
 // ── Smart Pipeline: Zen trabaja primero, Gemini solo supervisa si Zen lo pide ──
 
-async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, geminiKey, geminiModel, zenKey, model, signal, onChunk, onProgress }) {
+// ¿Pueden intervenir otras APIs además de la elegida?
+// - Modo "auto": si (la mezcla es el objetivo de ese modo).
+// - Modo de un solo modelo: solo si el usuario activo "APIs auxiliares" en Ajustes.
+export function helperApisEnabled(settings) {
+  return settings?.provider === 'auto' || settings?.helperApis === true
+}
+
+async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, rootDir, geminiKey, geminiModel, zenKey, model, signal, onChunk, onProgress }) {
   // Usar solo archivos relevantes en lugar de todo el proyecto
   const fileList = relevantFiles?.length > 0 ? relevantFiles : Object.keys(projectFiles)
   const allContent = fileList
@@ -1535,7 +1546,7 @@ async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, gem
   const truncated = allContent.length > 50000 ? allContent.slice(0, 50000) + '\n… (truncado)' : allContent
 
   // Step 1: Zen investiga y responde directamente
-  onProgress?.('◉ Zen: analizando el proyecto…')
+  onProgress?.('Zen analiza el proyecto')
   const zenModel = (model && model !== 'auto') ? model : PROVIDERS.zen.defaultModel
   let zenResponse = ''
   const zenTimeout = AbortSignal.timeout?.(120_000)
@@ -1567,7 +1578,7 @@ async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, gem
       toolResults.push(result)
     }
     const cleanedZen = normZen.replace(TOOL_RE, '').trim()
-    onProgress?.('◉ Zen: procesando resultados…')
+    onProgress?.('Zen procesa los resultados')
     let toolResponse = ''
     try {
       await callOpenAI({
@@ -1577,7 +1588,7 @@ async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, gem
         messages: [
           { role: 'system', content: 'Sos un desarrollador experto.' },
           { role: 'user', content: `Pregunta: ${userQuestion}\n\nProyecto:\n${truncated}` },
-          { role: 'assistant', content: cleanedZen || '[...]' },
+          { role: 'assistant', content: cleanedZen || 'Consulté con herramientas.' },
           { role: 'user', content: `Datos solicitados:\n${toolResults.join('\n\n')}\n\nCompletá tu respuesta.` }
         ],
         signal: combinedSignal,
@@ -1593,9 +1604,9 @@ async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, gem
   // Step 2: Si Zen tiene dudas, Gemini supervisa
   const consultMatch = zenResponse.match(/\[CONSULTAR_GEMINI:\s*(.*?)\]/i)
   if (consultMatch) {
-    onProgress?.('◉ Gemini: revisando dudas de Zen…')
+    onProgress?.('Gemini revisa las dudas de Zen')
     const doubts = consultMatch[1].trim()
-    const cleanZen = zenResponse.replace(/\[CONSULTAR_GEMINI:.*?\]/i, '').trim()
+    const cleanZen = normalizeTools(zenResponse).replace(TOOL_RE, '').replace(/\[CONSULTAR_GEMINI:.*?\]/i, '').trim()
     let geminiFinal = ''
     try {
       await callGemini({
@@ -1616,15 +1627,15 @@ async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, gem
     if (geminiFinal.trim() === 'OK') {
       return cleanZen
     }
-    return `${cleanZen}\n\n---\n*🧠 Gemini (supervisor):* ${geminiFinal.trim()}`
+    return `${cleanZen}\n\n---\n**Revisión de Gemini:** ${geminiFinal.trim()}`
   }
 
-  return zenResponse?.trim() || null
+  return normalizeTools(zenResponse || '').replace(TOOL_RE, '').trim() || null
 }
 
 // ── sendToAI principal ────────────────────────────────────────────────────────
 
-export async function sendToAI({ provider, model, apiKey, messages, signal, onChunk, settings, imageBase64, activeFile, activeContent, projectFiles, relevantFiles, rootDir, onToolProgress, agentMode }) {
+export async function sendToAI({ provider, model, apiKey, messages, signal, onChunk, settings, imageBase64, activeFile, activeContent, projectFiles, relevantFiles, rootDir, onToolProgress, onStatus, agentMode }) {
   const ollamaUrl = settings?.ollamaUrl || 'http://localhost:11434'
   const useAgent = agentMode !== undefined ? !!agentMode : settings?.agentMode !== false
   const agentCap = Number(settings?.agentToolRounds)
@@ -1722,7 +1733,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
   let lastCallMessages = messages   // ultimos mensajes enviados al modelo (para reintentar con el mismo contexto)
 
   // ── Smart Pipeline: solo sin imagen (Gemini ve la imagen directo) ──
-  if (!imageBase64 && projectFiles && Object.keys(projectFiles).length > 0 && provider === 'gemini') {
+  if (!imageBase64 && projectFiles && Object.keys(projectFiles).length > 0 && provider === 'gemini' && helperApisEnabled(settings)) {
     const geminiKey = settings?.apiKeys?.gemini
     const zenKey = settings?.apiKeys?.zen
     const geminiModel = settings?.models?.gemini || PROVIDERS.gemini.defaultModel
@@ -1731,9 +1742,9 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
       const lastContent = messages[messages.length - 1]?.content || ''
       const smartResult = await runSmartPipeline({
         userQuestion: typeof lastContent === 'string' ? lastContent : '',
-        projectFiles, relevantFiles, geminiKey, geminiModel, zenKey, model: zenModel, signal,
+        projectFiles, relevantFiles, rootDir, geminiKey, geminiModel, zenKey, model: zenModel, signal,
         onChunk,
-        onProgress: (msg) => onChunk?.(msg, msg),
+        onProgress: (t) => onStatus?.({ text: t }),
       })
       if (smartResult) {
         return smartResult
@@ -1834,11 +1845,11 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
             const isCredits = /402|credit|billing|balance|insufficient/i.test(e.message)
             if (isCredits && !targetModel.endsWith('-free')) {
               const freeM = zenModels.find(m => m.endsWith('-free'))
-              if (freeM) return tryZen(freeM)
+              if (freeM) { onStatus?.({ text: `Zen: sin créditos en ${targetModel}, probando ${freeM}` }); return tryZen(freeM) }
               throw new Error('Zen: sin créditos.\nCargá créditos en opencode.ai/zen o usá un modelo -free.')
             }
             const fallback = zenModels.find(m => m !== targetModel)
-            if (fallback) return tryZen(fallback)
+            if (fallback) { onStatus?.({ text: `Zen: ${targetModel} falló, probando ${fallback}` }); return tryZen(fallback) }
             throw new Error('Zen: todos los modelos fallaron.\nÚltimo: ' + e.message)
           }
         }
@@ -1857,6 +1868,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
               let lastErr = e
               for (const fm of fallbacks.slice(0, 2)) {
                 if (signal?.aborted) break
+                onStatus?.({ text: `OpenRouter: ${model} falló, probando ${fm}` })
                 try {
                   return await callOpenAI({
                     baseUrl: PROVIDERS.openrouter.baseUrl, apiKey, model: fm, tools, messages: msgs, signal, onChunk: cb, extra: orExtra, onToolCalls, onMetadata, reasoningContent: true,
@@ -1920,7 +1932,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
 
   // ── Status: contacting provider ──
   const provName = PROVIDERS[provider]?.name || provider
-  onChunk?.(`◉ Conectando con ${provName}…`, `◉ Conectando con ${provName}…`)
+  onStatus?.({ text: `Conectando con ${provName}` })
 
   // ── First call with tool-aware streaming ──
   toolAwareOnChunk.reset()
@@ -2014,7 +2026,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
 
   // ── Final round: pedir que termine sin nuevos tool calls ──
   const finalRaw = normalizeTools(response)
-  if (TOOL_RE.test(finalRaw)) {
+  if (new RegExp(TOOL_RE.source, 'i').test(finalRaw)) {
     const wrapUpMessages = [
       ...finalMessages,
       { role: 'assistant', content: finalRaw.replace(TOOL_RE, '').trim() || 'Seguí consultando herramientas para resolverlo.' },
@@ -2035,7 +2047,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
     const retryMessages = li >= 0 && typeof base[li].content === 'string'
       ? base.map((m, i) => i === li ? { ...m, content: m.content + '\n\n' + nudge } : m)
       : [...base, { role: 'user', content: nudge }]
-    onChunk?.('◉ La respuesta llegó vacía, reintentando…', '◉ La respuesta llegó vacía, reintentando…')
+    onStatus?.({ text: 'La respuesta llegó vacía, reintentando' })
     toolAwareOnChunk.reset()
     try {
       response = await makeProviderCall(retryMessages, toolAwareOnChunk, false)
@@ -2045,7 +2057,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
     }
     if (isDegenerateReply(finalText)) {
       const why = provider === 'gemini' || provider === 'zen+gemini' ? _lastGeminiDiag : null
-      finalText = `⚠️ ${provName} devolvió una respuesta vacía${why ? ` (${why})` : ''} aunque se reintentó. No se hizo ningún cambio. Probá de nuevo, reformulá el pedido o cambiá de modelo.`
+      finalText = `${provName} devolvió una respuesta vacía${why ? ` (${why})` : ''} aunque se reintentó. No se hizo ningún cambio. Probá de nuevo, reformulá el pedido o cambiá de modelo.`
       onChunk?.(finalText, finalText)
     }
   }
