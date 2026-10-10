@@ -248,8 +248,8 @@ export async function takeScreenshot() {
 
 /** Convierte argumentos JSON de function-calling (OpenAI) al texto que espera executeToolCall */
 function nativeJsonArgsToText(toolName, args) {
-  const raw = typeof args === 'string' ? args : JSON.stringify(args ?? '')
-  const t = raw.trim()
+  const raw = typeof args === 'string' ? args : (JSON.stringify(args ?? '') || '')
+  const t = (typeof raw === 'string' ? raw : String(raw || '')).trim()
   if (!t.startsWith('{')) return t
   try {
     const j = JSON.parse(t)
@@ -310,9 +310,11 @@ function nativeJsonArgsToText(toolName, args) {
 
 export async function executeToolCall(toolName, args, { projectFiles, rootDir }) {
   args = nativeJsonArgsToText(toolName, args)
+  // Garantizar que args es string
+  args = String(args || '').trim()
   switch (toolName.toLowerCase()) {
     case 'readfile': {
-      let filePath = args.trim()
+      let filePath = args
       let startLine = null, endLine = null
       // Soporte para [TOOL: readFile path:10-30] — rango de líneas
       const rangeMatch = filePath.match(/^(.*?):(\d+)-(\d+)$/)
