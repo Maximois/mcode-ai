@@ -739,7 +739,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
           setMsgs(p => [...p, { role:'assistant', content:'⚠️ Error de verificación al aplicar cambios:\n```\n' + errMsg + '\n```', _id: nextMsgId() }])
           if (autoFixCount.current >= 20) return
           autoFixCount.current++
-          queueMicrotask(() => send(`La verificación de sintaxis encontró estos errores al aplicar los cambios anteriores:\n\`\`\`\n${errMsg}\n\`\`\`\nCorregilos. Si persisten, segui intentando hasta que compile sin errores.`))
+          queueMicrotask(() => send(`La verificación de sintaxis encontró estos errores al aplicar los cambios anteriores:\n\`\`\`\n${errMsg}\n\`\`\`\nCorregilos. Si persisten, segui intentando hasta que compile sin errores.`, { auto: true }))
         }
       })
     } catch (e) {
@@ -799,8 +799,10 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
   const apiKey    = settings.apiKeys?.[prov] || null
   const model     = settings.models?.[prov]  || PROVIDERS[prov]?.defaultModel || ''
 
-  const send = async (text) => {
+  const send = async (text, sendOpts = {}) => {
     if ((!text.trim() && !image) || busy) return
+    // El tope de 20 auto-reparaciones es por pedido del usuario, no de por vida de la app
+    if (!sendOpts.auto) autoFixCount.current = 0
     const imageData = image
     let userContent = text.trim() || (image ? '¿Qué ves en esta imagen?' : '')
     let displayImage = imageData?.preview
@@ -1047,7 +1049,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
                   setMsgs(p => [...p, { role:'assistant', content:'⚠️ Auto-aplicar: error de verificación:\n```\n' + errMsg.slice(0, 2000) + '\n```', _id: nextMsgId() }])
                   if (autoFixCount.current < 20) {
                     autoFixCount.current++
-                    queueMicrotask(() => send(`Tras auto-aplicar parches, la verificación falló:\n\`\`\`\n${errMsg.slice(0, 2000)}\n\`\`\`\nCorregí el código.`))
+                    queueMicrotask(() => send(`Tras auto-aplicar parches, la verificación falló:\n\`\`\`\n${errMsg.slice(0, 2000)}\n\`\`\`\nCorregí el código.`, { auto: true }))
                   }
                 },
               })
@@ -2378,36 +2380,44 @@ function App() {
       if (r.ok) updateContent(matchTab.id, r.content)
     }
 
-    // ── Verificación automática ──
+    // ── Verificación automática (por archivo) ──
+    // Regla: solo se dice "correcto" cuando un verificador REAL lo comprobó.
+    // Si no hay verificador para ese tipo de archivo, se informa "sin verificar" (nunca "correcto").
     const ext = normFile.split('.').pop()?.toLowerCase()
-    const verifyCmds = {
-      js:  `node --check "${fp}"`,
-      jsx: `node --check "${fp}"`,
-      mjs: `node --check "${fp}"`,
-      cjs: `node --check "${fp}"`,
-      ts:  `npx --yes tsc --noEmit --lib esnext,dom "${fp}" 2>&1 || echo "tsc no disponible, salteando"`,
-      tsx: `npx --yes tsc --noEmit --lib esnext,dom --jsx react-jsx "${fp}" 2>&1 || echo "tsc no disponible, salteando"`,
-      py:  `python -m py_compile "${fp}" 2>&1 || python3 -m py_compile "${fp}" 2>&1 || echo "python no disponible, salteando"`,
-      json: `node -e "JSON.parse(require('fs').readFileSync('${fp.replace(/\\/g, '/')}','utf8'))"`,
-    }
-    const checkCmd = verifyCmds[ext]
-    if (checkCmd) {
+    const q = (x) => `"${x}"`
+    const jsonPath = fp.replace(/\\/g, '/')
+    const candidates = {
+      js:   [`node --check ${q(fp)}`],
+      mjs:  [`node --check ${q(fp)}`],
+      cjs:  [`node --check ${q(fp)}`],
+      json: [`node -e "JSON.parse(require('fs').readFileSync('${jsonPath}','utf8'))"`],
+      py:   [`python -m py_compile ${q(fp)}`, `python3 -m py_compile ${q(fp)}`, `py -m py_compile ${q(fp)}`],
+    }[ext]
+    // node no entiende JSX/TSX/TS: no se verifica por archivo (antes daba errores falsos en .jsx)
+    const noFileChecker = ['jsx', 'tsx', 'ts'].includes(ext)
+    const toolMissing = (t) => /no se reconoce|is not recognized|not found|no such file or directory|command not found|cannot find the file|no se encuentra el archivo/i.test(t)
+
+    if (noFileChecker) {
+      addTerm(`ℹ ${action.filePath}: sin verificador por archivo (${ext}); se comprueba con el proyecto si define "npm run verify"`, 'info')
+    } else if (candidates) {
       addTerm(`🔍 Verificando sintaxis de ${action.filePath}…`, 'info')
       setShowTerminal(true)
-      try {
-        const r = await window.api.runCommand({ command: checkCmd, cwd: rootDir || undefined })
-        if (r.code === 0 || r.ok) {
-          addTerm(`✔ Sintaxis correcta — ${action.filePath}`, 'out')
-        } else {
-          addTerm(`⚠ Posible error en ${action.filePath}:`, 'err')
-          const errParts = []
-          if (r.err) { addTerm(r.err.trim(), 'err'); errParts.push(r.err.trim()) }
-          if (r.out && r.out !== r.err) { addTerm(r.out.trim(), 'err'); errParts.push(r.out.trim()) }
-          return errParts.join('\n')
+      let verified = false
+      for (const cmd of candidates) {
+        try {
+          const r = await window.api.runCommand({ command: cmd, cwd: rootDir || undefined })
+          const text = `${r.err || ''}\n${r.out || ''}`.trim()
+          if (r.code === 0 || r.ok) { verified = true; break }
+          if (toolMissing(text)) continue            // ese intérprete no existe: probar el siguiente
+          addTerm(`⚠ Error en ${action.filePath}:`, 'err')
+          addTerm(text, 'err')
+          return text || `Error de sintaxis en ${action.filePath}`
+        } catch (e) {
+          addTerm(`⚠ No se pudo ejecutar el verificador: ${e.message}`, 'err')
         }
-      } catch (e) {
-        addTerm(`⚠ No se pudo verificar sintaxis: ${e.message}`, 'err')
       }
+      if (verified) addTerm(`✔ Sintaxis correcta — ${action.filePath}`, 'out')
+      else addTerm(`ℹ ${action.filePath}: sin verificar (no hay intérprete disponible para .${ext})`, 'info')
     }
   }, [rootDir, tabs, updateContent, markCodeChanged])
 
@@ -2430,10 +2440,34 @@ function App() {
       const err = await confirmAction(a)
       if (err) errors.push(err)
     }
+    // Verificación del proyecto: solo si el proyecto define el script "verify" en package.json
+    // (no se lanzan builds pesados por sorpresa). Una vez por lote, no por archivo.
+    const touchedCode = actions.some(a => a.type !== 'RUN' && a.type !== 'READ' && /\.(jsx?|tsx?|mjs|cjs)$/i.test(a.filePath || ''))
+    if (errors.length === 0 && touchedCode && rootDir && window.api) {
+      try {
+        const root = rootDir.replace(/\\/g, '/').replace(/\/$/, '')
+        const pk = await window.api.readFile(root + '/package.json')
+        const hasVerify = pk.ok && !!JSON.parse(pk.content || '{}')?.scripts?.verify
+        if (hasVerify) {
+          setShowTerminal(true)
+          setTermLines(p => [...p, { type: 'info', text: `${new Date().toLocaleTimeString()} 🔍 Verificando el proyecto (npm run verify)…` }])
+          const r = await window.api.runCommand({ command: 'npm run verify', cwd: rootDir })
+          const text = `${r.err || ''}\n${r.out || ''}`.trim()
+          if (r.code === 0 || r.ok) {
+            setTermLines(p => [...p, { type: 'out', text: `${new Date().toLocaleTimeString()} ✔ Proyecto verificado` }])
+          } else {
+            setTermLines(p => [...p, { type: 'err', text: `${new Date().toLocaleTimeString()} ✗ npm run verify falló:\n${text.slice(-1500)}` }])
+            errors.push(`npm run verify falló tras tus cambios:\n${text.slice(-1800) || '(sin salida; posible tiempo agotado)'}`)
+          }
+        }
+      } catch (e) {
+        console.warn('[VERIFY-PROJECT]', e)
+      }
+    }
     const errText = errors.length > 0 ? errors.join('\n\n') : ''
     if (errText) opts.onError?.(errText)
     return { ok: errors.length === 0, errors, applied: actions.length - errors.length }
-  }, [confirmAction])
+  }, [confirmAction, rootDir])
 
   // Terminal run command
   const runCmd = async (cmd) => {
