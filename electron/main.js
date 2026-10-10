@@ -43,14 +43,25 @@ function spawnTracked(...args) {
 function spawnShell(cmd, opts = {}) {
   const isWin = process.platform === 'win32'
   const shell = getShell()
+  
+  // Agregar node_modules/.bin a PATH para que npm, yarn, etc funcionen
+  const cwd = opts.cwd || process.cwd()
+  const nodeModulesBin = path.join(cwd, 'node_modules', '.bin')
+  const newPath = isWin
+    ? `${nodeModulesBin};${process.env.PATH};${process.env.SystemRoot}\\system32`
+    : `${nodeModulesBin}:${process.env.PATH}:/bin:/usr/bin`
+  
   if (isWin) {
     return spawnTracked(shell, ['/d', '/s', '/c', '"' + cmd + '"'], {
       ...opts,
       windowsVerbatimArguments: true,
-      env: { ...process.env, PATH: process.env.PATH + ';' + process.env.SystemRoot + '\\system32' },
+      env: { ...process.env, PATH: newPath },
     })
   }
-  return spawnTracked(shell, ['-c', cmd], { ...opts })
+  return spawnTracked(shell, ['-c', cmd], { 
+    ...opts,
+    env: { ...process.env, PATH: newPath },
+  })
 }
 
 const TEXT_EXTS = new Set([
@@ -748,14 +759,44 @@ ipcMain.handle('run-code', async (_, { code, language, filename, cwd }) => {
 // ── Shell command ──────────────────────────────────────────────────────────────
 ipcMain.handle('run-command', async (_, { command, cwd }) => {
   return new Promise(resolve => {
-    const proc = spawnShell(command, { cwd: cwd || os.homedir(), timeout: 60000 })
-    let out = '', err = ''
-    proc.stdout.on('data', d => { out += d; mainWindow?.webContents.send('cmd-stream', { type: 'out', text: d.toString() }) })
-    proc.stderr.on('data', d => { err += d; mainWindow?.webContents.send('cmd-stream', { type: 'err', text: d.toString() }) })
-    proc.on('close', code => {
-      resolve({ ok: code === 0, out: out || '', err: err || '', code })
-    })
-    proc.on('error', e => resolve({ ok: false, out: '', err: e.message, code: -1 }))
+    try {
+      const proc = spawnShell(command, { cwd: cwd || os.homedir(), timeout: 60000 })
+      let out = '', err = ''
+      
+      if (!proc.stdout || !proc.stderr) {
+        return resolve({ ok: false, out: '', err: 'Failed to spawn process', code: -1 })
+      }
+      
+      proc.stdout.on('data', d => { 
+        out += d
+        mainWindow?.webContents.send('cmd-stream', { type: 'out', text: d.toString() }) 
+      })
+      proc.stderr.on('data', d => { 
+        err += d
+        mainWindow?.webContents.send('cmd-stream', { type: 'err', text: d.toString() }) 
+      })
+      proc.on('close', code => {
+        resolve({ ok: code === 0, out: out || '', err: err || '', code })
+      })
+      proc.on('error', e => {
+        const message = e.message || 'Unknown error'
+        console.error('[run-command] Error:', message, 'Command:', command, 'CWD:', cwd)
+        resolve({ 
+          ok: false, 
+          out: '', 
+          err: `❌ ${message}\n\nCommand: ${command}\nWorking dir: ${cwd}`,
+          code: -1 
+        })
+      })
+    } catch (e) {
+      console.error('[run-command] Spawn error:', e.message)
+      resolve({ 
+        ok: false, 
+        out: '', 
+        err: `❌ Failed to spawn: ${e.message}`,
+        code: -1 
+      })
+    }
   })
 })
 

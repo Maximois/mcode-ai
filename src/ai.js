@@ -1529,7 +1529,7 @@ async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, gem
   if (toolMatches.length > 0) {
     const toolResults = []
     for (const m of toolMatches) {
-      const result = await executeToolCall(m[1], m[2].trim(), { projectFiles })
+      const result = await executeToolCall(m[1], m[2].trim(), { projectFiles, rootDir })
       toolResults.push(result)
     }
     const cleanedZen = normZen.replace(TOOL_RE, '').trim()

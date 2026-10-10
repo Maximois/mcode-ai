@@ -85,13 +85,18 @@ export async function initVscodeApi() {
   if (initPromise) return initPromise
 
   initPromise = (async () => {
-    await initialize({
-      ...layoutOverride(document.body),
-      ['accessibilityService']: new SyncDescriptor(SafeAccessibilityService, [], true),
-      ['contextViewService']: new SyncDescriptor(SafeContextViewService, [], true)
-    })
-    console.log('[editorServices] VSCode API initialized')
-    return true
+    try {
+      const result = await initialize({
+        ...layoutOverride(document.body),
+        ['accessibilityService']: new SyncDescriptor(SafeAccessibilityService, [], true),
+        ['contextViewService']: new SyncDescriptor(SafeContextViewService, [], true)
+      })
+      console.log('[editorServices] ✅ VSCode API initialized successfully')
+      return result
+    } catch (err) {
+      console.error('[editorServices] ❌ Failed to initialize VSCode API:', err)
+      throw new Error(`VSCode API initialization failed: ${err.message}`)
+    }
   })()
 
   return initPromise

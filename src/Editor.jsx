@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import { initVscodeApi } from './editorServices.js'
 
 let initPromise = null
@@ -12,6 +12,7 @@ function ensureApi() {
 export default function Editor({ activeTab, editorRef: editorRefProp, onChange, options }) {
   const containerRef = useRef(null)
   const innerRef = useRef(null)
+  const [initError, setInitError] = useState(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -20,23 +21,33 @@ export default function Editor({ activeTab, editorRef: editorRefProp, onChange, 
     let cancelled = false
 
     ;(async () => {
-      await ensureApi()
-      if (cancelled) return
-      const monaco = await import('monaco-editor/esm/vs/editor/editor.api.js')
-      if (cancelled) return
+      try {
+        await ensureApi()
+        if (cancelled) return
+        const monaco = await import('monaco-editor/esm/vs/editor/editor.api.js')
+        if (cancelled) return
 
-      editor = monaco.editor.create(container, {
-        value: activeTab?.content || '',
-        language: activeTab?.language || 'plaintext',
-        theme: 'vs-dark',
-        ...options,
-      })
-      innerRef.current = editor
-      if (editorRefProp) editorRefProp.current = editor
+        editor = monaco.editor.create(container, {
+          value: activeTab?.content || '',
+          language: activeTab?.language || 'plaintext',
+          theme: 'vs-dark',
+          automaticLayout: true,
+          ...options,
+        })
+        innerRef.current = editor
+        if (editorRefProp) editorRefProp.current = editor
+        setInitError(null)
 
-      editor.onDidChangeModelContent(() => {
-        if (onChange) onChange(editor.getValue())
-      })
+        editor.onDidChangeModelContent(() => {
+          if (onChange) onChange(editor.getValue())
+        })
+      } catch (err) {
+        console.error('[Editor] Initialization failed:', err)
+        setInitError(err.message || 'Editor initialization failed')
+        if (!cancelled) {
+          container.innerHTML = `<div style="color: red; padding: 20px; font-family: monospace;">⚠️ Editor Error: ${err.message}</div>`
+        }
+      }
     })()
 
     return () => {
@@ -72,5 +83,7 @@ export default function Editor({ activeTab, editorRef: editorRefProp, onChange, 
     }
   }, [activeTab?.language])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+  return (
+    <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+  )
 }
