@@ -1883,6 +1883,7 @@ function App() {
   const [tlResults, setTlResults] = useState({ events: [], startWindow: null, endWindow: null })
   const [expResults, setExpResults] = useState([])
   const appliedHashes = useRef(new Set())
+  const installOffered = useRef(new Set())  // herramientas de verificacion ya ofrecidas (1 vez por sesion)
   // ── File watcher — auto-refresh on disk changes ──
   useEffect(() => {
     if (!rootDir || !window.api?.watchStart) return
@@ -2382,42 +2383,87 @@ function App() {
 
     // ── Verificación automática (por archivo) ──
     // Regla: solo se dice "correcto" cuando un verificador REAL lo comprobó.
-    // Si no hay verificador para ese tipo de archivo, se informa "sin verificar" (nunca "correcto").
+    // Si falta el verificador en esta PC, se OFRECE instalarlo (con confirmación) en vez de saltear en silencio.
     const ext = normFile.split('.').pop()?.toLowerCase()
+    const isWin = typeof navigator !== 'undefined' && /Win/i.test(navigator.userAgent)
     const q = (x) => `"${x}"`
     const jsonPath = fp.replace(/\\/g, '/')
-    const candidates = {
-      js:   [`node --check ${q(fp)}`],
-      mjs:  [`node --check ${q(fp)}`],
-      cjs:  [`node --check ${q(fp)}`],
-      json: [`node -e "JSON.parse(require('fs').readFileSync('${jsonPath}','utf8'))"`],
-      py:   [`python -m py_compile ${q(fp)}`, `python3 -m py_compile ${q(fp)}`, `py -m py_compile ${q(fp)}`],
-    }[ext]
-    // node no entiende JSX/TSX/TS: no se verifica por archivo (antes daba errores falsos en .jsx)
-    const noFileChecker = ['jsx', 'tsx', 'ts'].includes(ext)
-    const toolMissing = (t) => /no se reconoce|is not recognized|not found|no such file or directory|command not found|cannot find the file|no se encuentra el archivo/i.test(t)
+    const silenceOut = isWin ? '1>NUL' : '1>/dev/null'   // esbuild imprime el codigo transformado: no hace falta
+    const checkers = {
+      js:   { tool: 'node',    cmds: [`node --check ${q(fp)}`] },
+      mjs:  { tool: 'node',    cmds: [`node --check ${q(fp)}`] },
+      cjs:  { tool: 'node',    cmds: [`node --check ${q(fp)}`] },
+      json: { tool: 'node',    cmds: [`node -e "JSON.parse(require('fs').readFileSync('${jsonPath}','utf8'))"`] },
+      py:   { tool: 'python',  cmds: [`python -m py_compile ${q(fp)}`, `python3 -m py_compile ${q(fp)}`, `py -m py_compile ${q(fp)}`] },
+      // JSX/TS/TSX: node no los entiende. esbuild (ya presente en proyectos Vite) los parsea de verdad.
+      jsx:  { tool: 'esbuild', cmds: [`npx --no-install esbuild ${q(fp)} --log-level=error ${silenceOut}`] },
+      tsx:  { tool: 'esbuild', cmds: [`npx --no-install esbuild ${q(fp)} --log-level=error ${silenceOut}`] },
+      ts:   { tool: 'esbuild', cmds: [`npx --no-install esbuild ${q(fp)} --log-level=error ${silenceOut}`] },
+    }
+    const installable = {
+      python:  { label: 'Python', why: 'verificar archivos .py',
+                 cmd: isWin ? 'winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements' : null,
+                 url: 'https://www.python.org/downloads/', restart: true },
+      node:    { label: 'Node.js', why: 'verificar archivos .js y .json',
+                 cmd: isWin ? 'winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements' : null,
+                 url: 'https://nodejs.org/', restart: true },
+      esbuild: { label: 'esbuild (verificador de JSX/TS)', why: 'verificar archivos .jsx, .ts y .tsx',
+                 cmd: rootDir ? 'npm install --save-dev esbuild' : null, url: null, restart: false },
+    }
+    const toolMissing = (t) => /no se reconoce|is not recognized|not found|no such file or directory|command not found|cannot find the file|no se encuentra el archivo|missing packages|could not determine executable|npx canceled/i.test(t)
+    // recorta el stack interno de node/npx que ensucia el error real
+    const cleanErr = (t) => String(t || '').split(/\n(?:node:child_process|Error: Command failed)/)[0].trim()
 
-    if (noFileChecker) {
-      addTerm(`ℹ ${action.filePath}: sin verificador por archivo (${ext}); se comprueba con el proyecto si define "npm run verify"`, 'info')
-    } else if (candidates) {
+    const offerInstall = (key) => {
+      const t = installable[key]
+      if (installOffered.current.has(key)) {
+        addTerm(`ℹ ${action.filePath}: sin verificar (falta ${t.label}; ya te lo ofrecí en esta sesión)`, 'info')
+        return
+      }
+      installOffered.current.add(key)
+      if (!t.cmd) {
+        addTerm(`⚠ Falta ${t.label} para ${t.why}.${t.url ? ' Instalalo desde ' + t.url + ' y reiniciá MCodeAI.' : ''}`, 'err')
+        return
+      }
+      const lines = [
+        `Para ${t.why} falta ${t.label} en esta PC.`,
+        '',
+        'Instalarlo ahora ejecuta:',
+        `  ❯ ${t.cmd}`,
+        '',
+        t.restart ? 'Cuando termine, reiniciá MCodeAI para que lo detecte (el PATH se actualiza al abrir de nuevo).'
+                  : 'Esto agrega la dependencia a package.json y node_modules de ESTE proyecto.',
+        t.url ? `Si prefirís hacerlo a mano: ${t.url}` : '',
+        '',
+        'Cancelar = seguir sin verificar este tipo de archivo (se informará como "sin verificar", nunca como correcto).',
+      ].filter((l, i, a) => !(l === '' && a[i - 1] === ''))
+      setPendingAction({ action: { type: 'RUN', filePath: rootDir || '', content: t.cmd }, preview: lines.join('\n'), isRun: true })
+      addTerm(`⚠ Falta ${t.label} para ${t.why}. Revisá el diálogo para instalarlo.`, 'err')
+    }
+
+    const checker = checkers[ext]
+    if (checker) {
       addTerm(`🔍 Verificando sintaxis de ${action.filePath}…`, 'info')
       setShowTerminal(true)
       let verified = false
-      for (const cmd of candidates) {
+      let missing = false
+      for (const cmd of checker.cmds) {
         try {
           const r = await window.api.runCommand({ command: cmd, cwd: rootDir || undefined })
           const text = `${r.err || ''}\n${r.out || ''}`.trim()
           if (r.code === 0 || r.ok) { verified = true; break }
-          if (toolMissing(text)) continue            // ese intérprete no existe: probar el siguiente
+          if (toolMissing(text)) { missing = true; continue }   // ese intérprete no existe: probar el siguiente
+          const shown = cleanErr(text)
           addTerm(`⚠ Error en ${action.filePath}:`, 'err')
-          addTerm(text, 'err')
-          return text || `Error de sintaxis en ${action.filePath}`
+          addTerm(shown, 'err')
+          return shown || `Error de sintaxis en ${action.filePath}`
         } catch (e) {
           addTerm(`⚠ No se pudo ejecutar el verificador: ${e.message}`, 'err')
         }
       }
       if (verified) addTerm(`✔ Sintaxis correcta — ${action.filePath}`, 'out')
-      else addTerm(`ℹ ${action.filePath}: sin verificar (no hay intérprete disponible para .${ext})`, 'info')
+      else if (missing) offerInstall(checker.tool)
+      else addTerm(`ℹ ${action.filePath}: sin verificar`, 'info')
     }
   }, [rootDir, tabs, updateContent, markCodeChanged])
 
