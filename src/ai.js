@@ -12,25 +12,25 @@ export const TOOL_RE = new RegExp('\\[(?:TOOL|TOC):\\s*' + _toolNames + '(?:\\s+
 export function normalizeTools(text) {
   return text
     // READ:ruta → [TOOL: readFile ruta]
-    .replace(/(?:^|\n)\s*(?:READ|readFile)\s*:\s*(.+?)(?=\n|$)/gim, (m, args) => '\n[TOOL: readFile ' + args.trim() + ']')
+    .replace(/(?:^|\n)\s*(?:READ|readFile)\s*:\s*(.+?)(?=\n|$)/gim, (m, args) => '\n[TOOL: readFile ' + String(args || '').trim() + ']')
     // grep("patron") → [TOOL: grep patron]
-    .replace(/(?:^|\n)\s*grep\s*\(\s*["'](.+?)["'](?:\s*,\s*["'](.+?)["'])?\s*\)/gim, (m, query) => '\n[TOOL: grep ' + query + ']')
+    .replace(/(?:^|\n)\s*grep\s*\(\s*["'](.+?)["'](?:\s*,\s*["'](.+?)["'])?\s*\)/gim, (m, query) => '\n[TOOL: grep ' + String(query || '').trim() + ']')
     // glob("**/*.js") → [TOOL: glob **/*.js]
-    .replace(/(?:^|\n)\s*glob\s*\(\s*["'](.+?)["']\s*\)/gim, (m, pattern) => '\n[TOOL: glob ' + pattern + ']')
+    .replace(/(?:^|\n)\s*glob\s*\(\s*["'](.+?)["']\s*\)/gim, (m, pattern) => '\n[TOOL: glob ' + String(pattern || '').trim() + ']')
     // searchProject("texto") → [TOOL: searchProject texto]
-    .replace(/(?:^|\n)\s*searchProject\s*\(\s*["'](.+?)["']\s*\)/gim, (m, query) => '\n[TOOL: searchProject ' + query + ']')
+    .replace(/(?:^|\n)\s*searchProject\s*\(\s*["'](.+?)["']\s*\)/gim, (m, query) => '\n[TOOL: searchProject ' + String(query || '').trim() + ']')
     // listDir("ruta") → [TOOL: listDir ruta]
-    .replace(/(?:^|\n)\s*listDir\s*\(\s*["'](.+?)["']\s*\)/gim, (m, path) => '\n[TOOL: listDir ' + path + ']')
+    .replace(/(?:^|\n)\s*listDir\s*\(\s*["'](.+?)["']\s*\)/gim, (m, path) => '\n[TOOL: listDir ' + String(path || '').trim() + ']')
     // tree("ruta") → [TOOL: tree ruta]
-    .replace(/(?:^|\n)\s*tree\s*\(\s*["'](.+?)["']\s*\)/gim, (m, path) => '\n[TOOL: tree ' + path + ']')
+    .replace(/(?:^|\n)\s*tree\s*\(\s*["'](.+?)["']\s*\)/gim, (m, path) => '\n[TOOL: tree ' + String(path || '').trim() + ']')
     // toolname: args (ej: "readFile:Cargo.toml" o "run: cargo check")
-    .replace(new RegExp('(?:^|\\n)\\s*(' + _toolNames + ')\\s*:\\s*(.+?)(?=\\n|$)', 'gim'), (m, cmd, args) => '\n[TOOL: ' + cmd + ' ' + args.trim() + ']')
+    .replace(new RegExp('(?:^|\\n)\\s*(' + _toolNames + ')\\s*:\\s*(.+?)(?=\\n|$)', 'gim'), (m, cmd, args) => '\n[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
     // TOOL: cmd args (texto suelto sin [corchetes], con/sin backticks)
-    .replace(new RegExp('`*TOOL:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + args.trim() + ']')
+    .replace(new RegExp('`*TOOL:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
     // TOC: cmd args (texto suelto, typo "TOC")
-    .replace(new RegExp('`*TOC:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + args.trim() + ']')
+    .replace(new RegExp('`*TOC:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\n`]+)`*', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
     // [TOC: cmd args] → [TOOL: cmd args]
-    .replace(new RegExp('\\[TOC:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\]]+)\\]', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + args.trim() + ']')
+    .replace(new RegExp('\\[TOC:\\s*(' + _toolNames.slice(4, -1) + ')\\s+([^\\]]+)\\]', 'gi'), (m, cmd, args) => '[TOOL: ' + cmd + ' ' + String(args || '').trim() + ']')
 }
 
 // ── Native function calling schemas (OpenAI-compatible providers) ──────────
@@ -143,8 +143,8 @@ export function addExperience({ type, tags, context, solution, code, file, proje
 
 export function searchExperience(query, limit = 5) {
   const db = loadExp()
-  if (!query || !query.trim()) return db.slice(0, limit)
-  const q = query.toLowerCase()
+  const q = (query || '').toString().toLowerCase()
+  if (!q || !q.trim()) return db.slice(0, limit)
   const scores = db.map(e => {
     let score = 0
     if (e.tags.some(t => q.includes(t) || t.includes(q))) score += 5
@@ -167,7 +167,8 @@ export function getExperienceStats() {
 export function getTimeline(timeQuery = '', windowMin = 30) {
   const now = new Date()
   let targetTime = now
-  let q = timeQuery.trim().replace(/^["']|["']$/g, '')
+  const timeStr = (timeQuery || '').toString().trim()
+  let q = timeStr.replace(/^["']|["']$/g, '')
 
   if (/^\d{1,2}:\d{2}$/.test(q)) {
     const [h, m] = q.split(':').map(Number)
@@ -254,16 +255,16 @@ function nativeJsonArgsToText(toolName, args) {
   try {
     const j = JSON.parse(t)
     const tn = toolName.toLowerCase()
-    if (tn === 'readfile') return (j.path || j.file || '').trim() || t
-    if (tn === 'searchproject') return (j.query || '').trim() || t
+    if (tn === 'readfile') return String(j.path || j.file || '').trim() || t
+    if (tn === 'searchproject') return String(j.query || '').trim() || t
     if (tn === 'listdir') return (j.path != null ? String(j.path) : '.').trim() || t
-    if (tn === 'glob') return (j.pattern || '').trim() || t
-    if (tn === 'grep') return (j.pattern || j.query || '').trim() || t
-    if (tn === 'searchweb') return (j.query || '').trim() || t
-    if (tn === 'fetchurl') return (j.url || '').trim() || t
-    if (tn === 'git') return (j.args || j.command || '').trim() || t
+    if (tn === 'glob') return String(j.pattern || '').trim() || t
+    if (tn === 'grep') return String(j.pattern || j.query || '').trim() || t
+    if (tn === 'searchweb') return String(j.query || '').trim() || t
+    if (tn === 'fetchurl') return String(j.url || '').trim() || t
+    if (tn === 'git') return String(j.args || j.command || '').trim() || t
     if (tn === 'createplan') {
-      const title = (j.title || '').trim()
+      const title = String(j.title || '').trim()
       const steps = typeof j.steps === 'string' ? j.steps : Array.isArray(j.steps) ? j.steps.join(' | ') : ''
       if (title && steps) return `${title}|${steps}`
       return t
@@ -272,7 +273,7 @@ function nativeJsonArgsToText(toolName, args) {
       if (j.step != null && String(j.step).trim()) return String(j.step).trim()
       const idx = j.stepIndex != null ? String(j.stepIndex) : ''
       const st = j.status != null ? String(j.status) : ''
-      const joined = `${idx} ${st}`.trim()
+      const joined = String(`${idx} ${st}`).trim()
       return joined || t
     }
     if (tn === 'listplans') return ''
@@ -309,10 +310,13 @@ function nativeJsonArgsToText(toolName, args) {
 }
 
 export async function executeToolCall(toolName, args, { projectFiles, rootDir }) {
-  args = nativeJsonArgsToText(toolName, args)
-  // Garantizar que args es string
-  args = String(args || '').trim()
-  switch (toolName.toLowerCase()) {
+  try {
+    args = nativeJsonArgsToText(toolName, args)
+    // Garantizar que args es string
+    args = String(args || '').trim()
+    if (!args) args = ''
+    
+    switch (toolName.toLowerCase()) {
     case 'readfile': {
       let filePath = args
       let startLine = null, endLine = null
@@ -379,7 +383,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
     }
     case 'searchproject': {
       if (!projectFiles) return '[Sin proyecto cargado]'
-      const query = args.trim().toLowerCase()
+      const query = String(args || '').trim().toLowerCase()
       const results = []
       for (const [rel, content] of Object.entries(projectFiles)) {
         if (!content || content === '[archivo muy grande, omitido]') continue
@@ -395,17 +399,17 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
           results.push({ file: rel, matches: matchLines.slice(0, 10) })
         }
       }
-      if (results.length === 0) return `[Sin resultados para "${args.trim()}"]`
+      if (results.length === 0) return `[Sin resultados para "${String(args || '').trim()}"]`
       return results.slice(0, 10).map(r =>
         `=== ${r.file} ===\n` + r.matches.map(m => `  ${m.line}: ${m.text}`).join('\n')
       ).join('\n\n')
     }
     case 'listdir': {
-      const dirPath = args.trim()
+      const dirPath = String(args || '').trim()
       return await listDirFromDisk(dirPath)
     }
     case 'glob': {
-      const pattern = args.trim()
+      const pattern = String(args || '').trim()
       const dir = rootDir || '.'
       if (typeof window !== 'undefined' && window.api?.toolGlob) {
         const r = await window.api.toolGlob(dir, pattern)
@@ -417,7 +421,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       return '[No disponible fuera de Electron]'
     }
     case 'grep': {
-      const query = args.trim()
+      const query = String(args || '').trim()
       const dir = rootDir || '.'
       if (typeof window !== 'undefined' && window.api?.toolGrep) {
         const r = await window.api.toolGrep(dir, query)
@@ -429,7 +433,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       return '[No disponible fuera de Electron]'
     }
     case 'searchweb': {
-      const query = args.trim()
+      const query = String(args || '').trim()
       const result = await searchWeb(query, 5)
       if (result.ok && result.results.length > 0) {
         return result.results.map((r, i) =>
@@ -439,7 +443,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       return `[Sin resultados web para "${query}"]`
     }
     case 'fetchurl': {
-      const url = args.trim()
+      const url = String(args || '').trim()
       if (typeof window !== 'undefined' && window.api?.fetchURL) {
         const r = await window.api.fetchURL(url)
         if (r.ok) {
@@ -452,20 +456,20 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
     }
     case 'git': {
       const dir = rootDir || '.'
-      const cmd = args.trim()
+      const cmd = String(args || '').trim()
       if (typeof window !== 'undefined' && window.api?.runCommand) {
         const r = await window.api.runCommand({ command: `git ${cmd}`, cwd: dir })
         let out = ''
         if (r.out) out += r.out
         if (r.err) out += '\n' + r.err
-        if (!out.trim()) out = '(sin salida)'
-        return out.trim()
+        if (!String(out || '').trim()) out = '(sin salida)'
+        return String(out || '').trim()
       }
       return '[No disponible fuera de Electron]'
     }
     case 'createplan': {
       loadPlans()
-      const parts = args.split('|').map(s => s.trim()).filter(Boolean)
+      const parts = (args || '').split('|').map(s => String(s || '').trim()).filter(Boolean)
       if (parts.length < 2) return '[Uso: [TOOL: createPlan título | paso 1 | paso 2 | ...]]'
       const title = parts[0]
       const steps = parts.slice(1).map(desc => ({ desc, status: 'pending' }))
@@ -498,7 +502,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
     }
     case 'undo': {
       if (undoHistory.length === 0) return '[No hay cambios para deshacer]'
-      const count = Math.min(parseInt(args.trim()) || 1, undoHistory.length)
+      const count = Math.min(parseInt(String(args || '').trim()) || 1, undoHistory.length)
       const results = []
       for (let i = 0; i < count; i++) {
         const entry = undoHistory[i]
@@ -511,9 +515,9 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       return results.length > 0 ? results.join('\n') : '[No se pudo deshacer]'
     }
     case 'tree': {
-      const dir = (args.trim() || rootDir || '.').split(/\s+/)[0]
+      const dir = (String(args || '').trim() || rootDir || '.').split(/\s+/)[0]
       let maxDepth = 3
-      const depthMatch = args.trim().match(/depth=(\d+)/i)
+      const depthMatch = String(args || '').trim().match(/depth=(\d+)/i)
       if (depthMatch) maxDepth = parseInt(depthMatch[1])
       if (typeof window !== 'undefined' && window.api?.readDir) {
         const lines = ['📁 ' + dir]
@@ -532,7 +536,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       return '[No disponible fuera de Electron]'
     }
     case 'review': {
-      const filePath = args.trim()
+      const filePath = String(args || '').trim()
       const content = await readFileFromDisk(filePath)
       if (!content || content.startsWith('[Error') || content.startsWith('[No disponible'))
         return `[No se pudo leer "${filePath}"]`
@@ -562,7 +566,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       return '[No disponible fuera de Electron]'
     }
     case 'createcomponent': {
-      const name = args.trim().replace(/\s+/g, '')
+      const name = String(args || '').trim().replace(/\s+/g, '')
       if (!name) return '[Uso: [TOOL: createComponent Button] — crea un componente con estructura y estilos]'
       const ext = (rootDir && rootDir.match(/react|next|vue/i)) ? 'jsx' : 'jsx'
       const comp = `import React from 'react'\n\nfunction ${name}({ children, ...props }) {\n  return (\n    <div className="${name.toLowerCase()}" {...props}>\n      {children}\n    </div>\n  )\n}\n\nexport default ${name}\n`
@@ -575,7 +579,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       const dir = rootDir || '.'
       if (typeof window !== 'undefined' && window.api?.runCommand) {
         const r = await window.api.runCommand({ command: 'git log --oneline --date=short --format="%ad %h %s" -50', cwd: dir })
-        if (r.out) return `📋 **Changelog**\n\n` + r.out.trim()
+        if (r.out) return `📋 **Changelog**\n\n` + String(r.out || '').trim()
         if (r.err) return `[Error: ${r.err}]`
         return '[No hay commits o no es un repositorio git]'
       }
@@ -587,7 +591,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       args.replace(/(\w+)="([^"]*)"/g, (_, k, v) => { fields[k] = v; return '' })
       const type = fields.type || 'solution'
       const tags = (fields.tags || '').split(',').map(t => t.trim()).filter(Boolean)
-      const context = fields.context || args.replace(/\w+="[^"]*"/g, '').trim()
+      const context = fields.context || String(args || '').replace(/\w+="[^"]*"/g, '').trim()
       const solution = fields.solution || ''
       const code = fields.code || ''
       const file = fields.file || ''
@@ -597,7 +601,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       return `✅ Experiencia guardada (${db.length} total). Tipo: ${type}${tags.length ? ', tags: ' + tags.join(', ') : ''}`
     }
     case 'remember': {
-      const query = args.trim()
+      const query = String(args || '').trim()
       const results = searchExperience(query, 5)
       if (results.length === 0) return `[Sin experiencias previas para "${query}"]`
       saveExp() // persist updated counts
@@ -611,7 +615,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       ).join('\n\n')
     }
     case 'experience': {
-      const action = args.trim().toLowerCase()
+      const action = String(args || '').trim().toLowerCase()
       if (action === 'stats' || action === '') {
         const stats = getExperienceStats()
         const db = loadExp()
@@ -640,14 +644,14 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       const now = new Date()
       let targetTime = now
       let windowMin = 30
-      let query = args.trim()
+      let query = String(args || '').trim()
 
       // Parse window=N parameter
       const wm = query.match(/window=(\d+)/i)
-      if (wm) { windowMin = parseInt(wm[1]); query = query.replace(/window=\d+/i, '').trim() }
+      if (wm) { windowMin = parseInt(wm[1]); query = String(query || '').replace(/window=\d+/i, '').trim() }
 
       // Parse time queries
-      query = query.replace(/^["']|["']$/g, '').trim()
+      query = String(query || '').replace(/^["']|["']$/g, '').trim()
       if (/^\d{1,2}:\d{2}$/.test(query)) {
         const [h, m] = query.split(':').map(Number)
         targetTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m)
@@ -717,9 +721,9 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
         let out = ''
         if (r.out) out += r.out
         if (r.err) out += '\n⚠ ' + r.err
-        if (!out.trim()) out = '(sin salida)'
+        if (!String(out || '').trim()) out = '(sin salida)'
         if (r.code !== 0) out += '\n❌ Exit code: ' + r.code
-        return out.trim()
+        return String(out || '').trim()
       }
       return '[run no disponible fuera de Electron]'
     }
@@ -734,6 +738,10 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
     }
     default:
       return `[Herramienta desconocida: ${toolName}]`
+  }
+  } catch (err) {
+    console.error('[executeToolCall] Error en herramienta', toolName, ':', err.message)
+    return `[Error en herramienta "${toolName}": ${err.message}]`
   }
 }
 
