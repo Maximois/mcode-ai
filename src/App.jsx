@@ -3,7 +3,7 @@ import React, {
 } from 'react'
 import {
   routeProvider, sendToAI, buildMessages, searchWeb, parseActions, stripActions,
-  analyzeProjectRelevance, selectRelevantFiles, PROVIDERS, fetchZenModels, estimateTokens,
+  analyzeProjectRelevance, selectRelevantFiles, helperApisEnabled, PROVIDERS, fetchZenModels, estimateTokens,
   imageToBase64, modelSupportsVision, describeImage, pushUndo, undoHistory, addExperience, searchExperience, getExperienceStats, getTimeline,
 } from './ai.js'
 import { useSettings } from './hooks/useSettings.js'
@@ -14,6 +14,7 @@ import { formatDestripeLogLine, formatDestripeMarkdown, fetchLiveWebSnapshots } 
 import DevPanel from './DevPanel.jsx'
 import ReverseIntelPanel from './ReverseIntelPanel.jsx'
 import ExtensionManager from './ExtensionManager.jsx'
+import { WorkCard, WorkSummary } from './WorkCard.jsx'
 import Editor from './Editor.jsx'
 
 function isLikelyNetworkOnlyIssue(message, reason) {
@@ -613,32 +614,15 @@ const ChatMsg = memo(function ChatMsg({ msg, onApply, onApplyAll }) {
   }
 
   if (msg.type === 'agent_log' && Array.isArray(msg.toolSteps) && msg.toolSteps.length > 0) {
+    // Compatibilidad: registros viejos traian { ok } en vez de { status }
+    const steps = msg.toolSteps.map(r => ({ ...r, status: r.status || (r.ok === false ? 'err' : 'ok') }))
     return (
       <div className="msg msg-ai agent-log-msg">
-        <div className="msg-avatar">⚙</div>
-        <div className="msg-body agent-log-body">
-          {msg.provider && (
-            <div className="msg-meta">
-              <span style={{ color: PROVIDERS[msg.provider]?.color || '#888' }}>
-                {PROVIDERS[msg.provider]?.name || msg.provider}
-              </span>
-              {msg.model && <span className="msg-model">· {String(msg.model).split('/').pop()}</span>}
-            </div>
-          )}
-          <details className="agent-log-details">
-            <summary className="agent-log-summary">
-              Herramientas <span className="agent-log-count">({msg.toolSteps.length})</span>
-            </summary>
-            <div className="agent-tool-trace-lines agent-log-inner">
-              {msg.toolSteps.map((row, i) => (
-                <div key={row.id || `${msg._id}-${i}`} className={`agent-tool-line ${row.ok ? 'agent-tool-ok' : 'agent-tool-err'}`}>
-                  <span className="agent-tool-glyph">{row.ok ? '✓' : '✗'}</span>
-                  <code className="agent-tool-name">{row.name}</code>
-                  <span className="agent-tool-detail">{row.detail}</span>
-                </div>
-              ))}
-            </div>
-          </details>
+        <div className="msg-avatar work-avatar" aria-hidden="true">
+          <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 1.5l1.4 3.6 3.6 1.4-3.6 1.4L8 11.5 6.6 7.9 3 6.5l3.6-1.4L8 1.5zM12.5 10l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" fill="currentColor" opacity="0.7"/></svg>
+        </div>
+        <div className="msg-body agent-log-body" style={{ background: 'transparent', padding: 0 }}>
+          <WorkSummary steps={steps} totalMs={msg.totalMs} />
         </div>
       </div>
     )
@@ -705,6 +689,9 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
   const [showModelPanel, setShowModelPanel] = useState(false)
   const [agentTrace, setAgentTrace] = useState([])
   const agentTraceRef = useRef([])
+  const [workText, setWorkText] = useState('')       // frase de estado (sin simbolos) mientras trabaja
+  const [workStart, setWorkStart] = useState(null)   // Date.now() de inicio, para el cronometro
+  const workStartRef = useRef(null)
   const modelPanelRef = useRef(null)
   useEffect(() => {
     if (!showModelPanel) return
@@ -810,6 +797,9 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
     setBusy(true)
     setAgentTrace([])
     agentTraceRef.current = []
+    workStartRef.current = Date.now()
+    setWorkStart(workStartRef.current)
+    setWorkText('Preparando el contexto')
     const ab = new AbortController()
     abortRef.current = ab
 
@@ -820,7 +810,8 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
       const freshFiles = rootDir && window.api ? await window.api.projectContext(rootDir).catch(() => null) : projectFiles
       const lastQ = text.trim()
       const needsRoute  = prov === 'auto'
-      const needsRelev  = !!(freshFiles && settings.apiKeys?.openrouter && Object.keys(freshFiles || {}).length > 3)
+      // Con un solo modelo elegido NO se consulta OpenRouter por su cuenta (salvo "APIs auxiliares" activadas)
+      const needsRelev  = !!(helperApisEnabled(settings) && freshFiles && settings.apiKeys?.openrouter && Object.keys(freshFiles || {}).length > 3)
 
       const localRelevantFiles = freshFiles
         ? selectRelevantFiles(freshFiles, lastQ, activeTab?.filePath || activeTab?.name, 5)
@@ -928,7 +919,12 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
         const routeImageBase64 = routeSupportsVision ? imageData?.base64 : null
         let routeUserContent = userContent
         if (imageData && !routeSupportsVision) {
-          routeUserContent = await describeImage({ imageBase64: imageData.base64, userContext: text.trim(), geminiApiKey: settings.apiKeys.gemini })
+          if (helperApisEnabled(settings) && settings.apiKeys?.gemini) {
+            routeUserContent = await describeImage({ imageBase64: imageData.base64, userContext: text.trim(), geminiApiKey: settings.apiKeys.gemini })
+          } else {
+            // Un solo proveedor: no se manda la imagen a otra API; se avisa con claridad
+            setMsgs(p => [...p, { role:'assistant', content: `${PROVIDERS[activeProv]?.name || activeProv} · ${String(activeModel).split('/').pop()} no procesa imágenes, así que la imagen no se envió. Elegí un modelo con visión o activá "APIs auxiliares" en Ajustes para que Gemini la describa.`, _id: nextMsgId() }])
+          }
         }
         const routeMessages = baseMessages.map((m, i) =>
           i === baseMessages.length - 1
@@ -940,7 +936,9 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
 
         let candidateFull = ''
         let rafPending = false
+        let sawText = false
         const onChunkCallback = (chunk, full) => {
+          if (!sawText && String(full || '').trim()) { sawText = true; setWorkText('Escribiendo la respuesta') }
           candidateFull = full
           pendingRef.current = full
           if (!rafPending) {
@@ -965,16 +963,25 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
             rootDir,
             onChunk: onChunkCallback,
             agentMode: agentModeEffective,
+            onStatus: ({ text: st }) => { if (st) setWorkText(st) },
             onToolProgress: ({ phase, name, detail, ok }) => {
-              if (phase !== 'done') return
-              const row = {
-                id: `${Date.now()}-${agentTraceRef.current.length}`,
-                name: name || '?',
-                detail: detail || '',
-                ok: ok !== false,
+              const nm = name || '?', dt = detail || ''
+              if (phase === 'start') {
+                const row = { id: `${Date.now()}-${agentTraceRef.current.length}`, name: nm, detail: dt, status: 'run', t0: Date.now() }
+                agentTraceRef.current.push(row)
+                setAgentTrace(t => [...t, row])
+                return
               }
-              agentTraceRef.current.push(row)
-              setAgentTrace(t => [...t, row])
+              if (phase !== 'done') return
+              // Cierra el ultimo paso en curso con el mismo nombre (o crea uno si no hubo 'start')
+              const list = agentTraceRef.current
+              let idx = -1
+              for (let i = list.length - 1; i >= 0; i--) { if (list[i].status === 'run' && list[i].name === nm) { idx = i; break } }
+              const status = ok === false ? 'err' : 'ok'
+              if (idx >= 0) list[idx] = { ...list[idx], status, ms: Date.now() - list[idx].t0 }
+              else list.push({ id: `${Date.now()}-${list.length}`, name: nm, detail: dt, status, ms: null })
+              setAgentTrace([...list])
+              setWorkText('Pensando')
             },
           })
 
@@ -985,7 +992,8 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
             setMsgs(p => [...p.slice(0, -1), aiMsg])
           }
 
-          const persistedSteps = agentTraceRef.current.map(({ id, name, detail, ok }) => ({ id, name, detail, ok }))
+          const persistedSteps = agentTraceRef.current.map(({ id, name, detail, status, ms }) => ({ id, name, detail, status: status === 'run' ? 'ok' : status, ms }))
+          const workTotalMs = workStartRef.current ? Date.now() - workStartRef.current : null
           if (persistedSteps.length > 0) {
             const logId = nextMsgId()
             setMsgs(p => {
@@ -995,6 +1003,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
                 type: 'agent_log',
                 role: 'assistant',
                 toolSteps: persistedSteps,
+                totalMs: workTotalMs,
                 provider: activeProv,
                 model: activeModel,
                 _id: logId,
@@ -1114,8 +1123,8 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
             ⚡ Agente
           </span>
         )}
-        {busy && prov === 'gemini' && settings.apiKeys?.gemini && settings.apiKeys?.zen && projectFiles && Object.keys(projectFiles).length > 0 && (
-          <span className="context-badge" style={{ borderColor:'#569cd6', color:'#569cd6' }}>◉ Gemini supervisando</span>
+        {busy && prov === 'gemini' && helperApisEnabled(settings) && settings.apiKeys?.gemini && settings.apiKeys?.zen && projectFiles && Object.keys(projectFiles).length > 0 && (
+          <span className="context-badge" style={{ borderColor:'#569cd6', color:'#569cd6' }} title="Zen analiza el proyecto y Gemini supervisa (APIs auxiliares activadas)">Gemini + Zen</span>
         )}
         {markerActive && <span className="context-badge">Corte de contexto activo</span>}
         <button
@@ -1206,7 +1215,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
           if (!window.api) return
           const text = msgs.map(m => {
             if (m.type === 'agent_log' && Array.isArray(m.toolSteps)) {
-              const lines = m.toolSteps.map(s => `- ${s.ok ? 'ok' : 'err'} ${s.name} ${s.detail || ''}`).join('\n')
+              const lines = m.toolSteps.map(s => `- ${(s.status === 'err' || s.ok === false) ? 'err' : 'ok'} ${s.name} ${s.detail || ''}`).join('\n')
               return `## Herramientas (${m.provider || ''})\n${lines}`
             }
             return `## ${m.role === 'user' ? 'Usuario' : 'IA'}${m.provider ? ' (' + m.provider + ')' : ''}\n${m.content || ''}`
@@ -1219,24 +1228,6 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
           <span className="undo-badge" title={`${undoHistory.length} cambio(s) para deshacer`}>↩ {undoHistory.length}</span>
         )}
       </div>
-
-      {agentTrace.length > 0 && (
-        <div className="agent-tool-trace" role="log" aria-live="polite">
-          <div className="agent-tool-trace-head">
-            <span className="agent-tool-trace-title">Herramientas</span>
-            <span className="agent-tool-trace-sub">{agentTrace.length} paso{agentTrace.length === 1 ? '' : 's'}</span>
-          </div>
-          <div className="agent-tool-trace-lines">
-            {agentTrace.map(row => (
-              <div key={row.id} className={`agent-tool-line ${row.ok ? 'agent-tool-ok' : 'agent-tool-err'}`}>
-                <span className="agent-tool-glyph">{row.ok ? '✓' : '✗'}</span>
-                <code className="agent-tool-name">{row.name}</code>
-                <span className="agent-tool-detail">{row.detail}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {showChatSearch && (
         <div className="chat-search-bar">
@@ -1253,6 +1244,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
 
       <div className="chat-messages">
         {msgs.filter(m => {
+          if (m.role === 'assistant' && !m.type && !String(m.content ?? '').trim() && !m.image) return false
           if (!chatSearch.trim()) return true
           const q = chatSearch.toLowerCase()
           if ((m.content || '').toLowerCase().includes(q) || (m.role || '').toLowerCase().includes(q)) return true
@@ -1265,9 +1257,11 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
           <ChatMsg key={`${m._id != null && m._id !== '' ? `id-${m._id}` : 'noid'}-${i}`} msg={m} onApply={onApplyAction} onApplyAll={handleApplyAll} />
         ))}
         {busy && (
-          <div className="msg msg-ai">
-            <div className="msg-avatar">AI</div>
-            <div className="msg-body"><span className="typing">···</span></div>
+          <div className="msg msg-ai work-msg">
+            <div className="msg-avatar work-avatar" aria-hidden="true" />
+            <div className="msg-body">
+              <WorkCard text={workText} steps={agentTrace} startedAt={workStart} />
+            </div>
           </div>
         )}
         <div ref={endRef} />
@@ -1507,6 +1501,18 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
               <input type="checkbox" checked={!!settings.autoApplyAiRun}
                 onChange={e => updateSettings({ autoApplyAiRun: e.target.checked })} />
               <span>También ejecutar bloques RUN (comandos en tu máquina — usar con cuidado)</span>
+            </label>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-label">IA — un solo proveedor</div>
+            <div style={{ fontSize:10, color:'var(--text-3)', marginBottom:8, lineHeight:1.5 }}>
+              Con un modelo elegido (no "Auto"), cada mensaje va solo a esa API. Si lo activás, otras APIs con key guardada pueden ayudar por detrás.
+            </div>
+            <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+              <input type="checkbox" checked={!!settings.helperApis}
+                onChange={e => updateSettings({ helperApis: e.target.checked })} />
+              <span>Permitir APIs auxiliares (Zen + Gemini juntos, OpenRouter para el índice, Gemini para describir imágenes)</span>
             </label>
           </div>
 
@@ -1926,7 +1932,7 @@ function App() {
     window.api.projectContext(rootDir).then(async files => {
       setProjFiles(files)
       // Auto-index: build symbol map immediately (no user prompt needed)
-      if (files && settings.apiKeys?.openrouter && Object.keys(files).length > 0) {
+      if (files && helperApisEnabled(settings) && settings.apiKeys?.openrouter && Object.keys(files).length > 0) {
         try {
           const { analyzeProjectRelevance } = await import('./ai.js')
           // Run a background "warm-up" so the index is ready for first question

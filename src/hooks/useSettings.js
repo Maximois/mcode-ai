@@ -34,6 +34,8 @@ const defaults = {
   agentMode: true,
   /** Máx. rondas tool→modelo con Modo Agente (4–24; fuera de agente siempre 4) */
   agentToolRounds: 10,
+  /** Con un solo modelo elegido, permitir que otras APIs ayuden (Zen+Gemini, OpenRouter para el indice, Gemini para describir imagenes). Por defecto: solo la API elegida */
+  helperApis: false,
   /** Aplicar al disco PATCH/WRITE/CREATE del asistente sin clic */
   autoApplyAiPatches: true,
   /** Ejecutar bloques RUN automáticamente (riesgo: comandos arbitrarios) */
