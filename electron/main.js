@@ -17,6 +17,22 @@ const isDev = process.env.NODE_ENV === 'development'
 const VSIX_EXTS_DIR = path.join(__dirname, 'extensions', 'vsix')
 
 let mainWindow = null
+
+// Envia al renderer principal solo si la ventana sigue viva.
+// `mainWindow?.` NO alcanza: la referencia queda no-nula aun despues de destruirse
+// y send() lanza "TypeError: Object has been destroyed".
+function sendToMain(channel, payload) {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send(channel, payload)
+    }
+  } catch {}
+}
+function safeSend(sender, channel, payload) {
+  try {
+    if (sender && !sender.isDestroyed()) sender.send(channel, payload)
+  } catch {}
+}
 let webServer = null
 let webServerPort = 3000
 
@@ -239,6 +255,7 @@ function createWindow() {
       nodeIntegration: false,
     },
   })
+  mainWindow.on('closed', () => { mainWindow = null })
   if (isDev) mainWindow.loadURL('http://127.0.0.1:5176')
   else mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
 }
@@ -746,8 +763,8 @@ ipcMain.handle('run-code', async (_, { code, language, filename, cwd }) => {
   return new Promise(resolve => {
     const proc = spawnShell(cmd, { timeout: 30000, cwd: runCwd })
     let out = '', err = ''
-    proc.stdout.on('data', d => { out += d; mainWindow?.webContents.send('cmd-stream', { type: 'out', text: d.toString() }) })
-    proc.stderr.on('data', d => { err += d; mainWindow?.webContents.send('cmd-stream', { type: 'err', text: d.toString() }) })
+    proc.stdout.on('data', d => { out += d; sendToMain('cmd-stream', { type: 'out', text: d.toString() }) })
+    proc.stderr.on('data', d => { err += d; sendToMain('cmd-stream', { type: 'err', text: d.toString() }) })
     proc.on('close', code => {
       try { fs.unlinkSync(src) } catch {}
       resolve(code === 0 ? { ok: true, out: out || '(sin salida)' } : { ok: false, out: err || out || `Exit: ${code}` })
@@ -769,11 +786,11 @@ ipcMain.handle('run-command', async (_, { command, cwd }) => {
       
       proc.stdout.on('data', d => { 
         out += d
-        mainWindow?.webContents.send('cmd-stream', { type: 'out', text: d.toString() }) 
+        sendToMain('cmd-stream', { type: 'out', text: d.toString() }) 
       })
       proc.stderr.on('data', d => { 
         err += d
-        mainWindow?.webContents.send('cmd-stream', { type: 'err', text: d.toString() }) 
+        sendToMain('cmd-stream', { type: 'err', text: d.toString() }) 
       })
       proc.on('close', code => {
         resolve({ ok: code === 0, out: out || '', err: err || '', code })
@@ -815,19 +832,19 @@ ipcMain.handle('terminal-create', (_, { cwd }) => {
 
   proc.stdout.on('data', d => {
     const text = d.toString()
-    mainWindow?.webContents.send('cmd-stream', { type: 'out', text, termId: id })
+    sendToMain('cmd-stream', { type: 'out', text, termId: id })
   })
   proc.stderr.on('data', d => {
     const text = d.toString()
-    mainWindow?.webContents.send('cmd-stream', { type: 'err', text, termId: id })
+    sendToMain('cmd-stream', { type: 'err', text, termId: id })
   })
   proc.on('close', code => {
     const text = `\nProceso terminado (código ${code})`
-    mainWindow?.webContents.send('cmd-stream', { type: 'info', text, termId: id, closed: true })
+    sendToMain('cmd-stream', { type: 'info', text, termId: id, closed: true })
     terminalSessions.delete(id)
   })
   proc.on('error', e => {
-    mainWindow?.webContents.send('cmd-stream', { type: 'err', text: e.message, termId: id, closed: true })
+    sendToMain('cmd-stream', { type: 'err', text: e.message, termId: id, closed: true })
     terminalSessions.delete(id)
   })
 
@@ -916,8 +933,8 @@ ipcMain.handle('dev-start', async (event, { cwd, cmd } = {}) => {
             const webCmd = extractWebServerCmd(raw)
             if (webCmd) {
               cmd = webCmd
-              mainWindow?.webContents.send('cmd-stream', { type: 'info', text: '[dev] Proyecto Electron detectado — ejecutando solo el servidor web (sin ventana Electron)' })
-              mainWindow?.webContents.send('cmd-stream', { type: 'warn', text: '[diagnóstico] Los proyectos Electron suelen usar <webview>. Si ves contenido vacío, usá ↗ o Ctrl+Enter para abrir URLs en pestañas nativas del editor.' })
+              sendToMain('cmd-stream', { type: 'info', text: '[dev] Proyecto Electron detectado — ejecutando solo el servidor web (sin ventana Electron)' })
+              sendToMain('cmd-stream', { type: 'warn', text: '[diagnóstico] Los proyectos Electron suelen usar <webview>. Si ves contenido vacío, usá ↗ o Ctrl+Enter para abrir URLs en pestañas nativas del editor.' })
             } else {
               cmd = raw
             }
@@ -936,11 +953,11 @@ ipcMain.handle('dev-start', async (event, { cwd, cmd } = {}) => {
     const cleaned = cmd.replace(/--open\b/gi, '').replace(/(?:^|\s+)-o(?=\s|$)/g, ' ').trim()
 
     devServerCwd = projectDir
-    mainWindow?.webContents.send('cmd-stream', { type: 'cmd', text: `[dev] ${cleaned}` })
+    sendToMain('cmd-stream', { type: 'cmd', text: `[dev] ${cleaned}` })
 
     // Kill any stale process on common dev ports before spawning
     ;[5173, 5174, 5175, 5176, 3000, 8080].forEach(killPort)
-    mainWindow?.webContents.send('cmd-stream', { type: 'info', text: '[dev] Puertos limpiados (stale processes killed)' })
+    sendToMain('cmd-stream', { type: 'info', text: '[dev] Puertos limpiados (stale processes killed)' })
 
     // Add node_modules/.bin to PATH so we can resolve executables like npm does
     const nodeBin = path.join(projectDir, 'node_modules', '.bin')
@@ -957,13 +974,14 @@ ipcMain.handle('dev-start', async (event, { cwd, cmd } = {}) => {
       },
     })
     activeProcs.add(devServerProc)
+    const thisProc = devServerProc
 
     const pipeOutput = (type, text) => {
-      mainWindow?.webContents.send('dev-log', { type, text })
-      mainWindow?.webContents.send('cmd-stream', { type, text: `[dev] ${text}` })
+      sendToMain('dev-log', { type, text })
+      sendToMain('cmd-stream', { type, text: `[dev] ${text}` })
       const urls = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+/g)
       if (urls) {
-        mainWindow?.webContents.send('dev-url', urls[0])
+        sendToMain('dev-url', urls[0])
         // Auto-open the preview window with DevTools
         if (!previewWindow || previewWindow.isDestroyed()) {
           try { openPreviewWindow(urls[0]) } catch {}
@@ -976,25 +994,29 @@ ipcMain.handle('dev-start', async (event, { cwd, cmd } = {}) => {
 
     devServerProc.on('exit', code => {
       const msg = `[Dev server exited with code ${code}]`
-      mainWindow?.webContents.send('dev-log', { type: 'info', text: msg })
-      mainWindow?.webContents.send('cmd-stream', { type: 'info', text: msg })
-      mainWindow?.webContents.send('dev-status', { running: false, cwd: devServerCwd })
-      activeProcs.delete(devServerProc)
-      devServerProc = null
-      devServerCwd = null
+      sendToMain('dev-log', { type: 'info', text: msg })
+      sendToMain('cmd-stream', { type: 'info', text: msg })
+      activeProcs.delete(thisProc)
+      if (devServerProc === thisProc) {
+        sendToMain('dev-status', { running: false, cwd: devServerCwd })
+        devServerProc = null
+        devServerCwd = null
+      }
     })
 
     devServerProc.on('error', e => {
       const msg = `[Dev server error: ${e.message}]`
-      mainWindow?.webContents.send('dev-log', { type: 'err', text: msg })
-      mainWindow?.webContents.send('cmd-stream', { type: 'err', text: msg })
-      mainWindow?.webContents.send('dev-status', { running: false, cwd: devServerCwd })
-      activeProcs.delete(devServerProc)
-      devServerProc = null
-      devServerCwd = null
+      sendToMain('dev-log', { type: 'err', text: msg })
+      sendToMain('cmd-stream', { type: 'err', text: msg })
+      activeProcs.delete(thisProc)
+      if (devServerProc === thisProc) {
+        sendToMain('dev-status', { running: false, cwd: devServerCwd })
+        devServerProc = null
+        devServerCwd = null
+      }
     })
 
-    mainWindow?.webContents.send('dev-status', { running: true, cwd: devServerCwd })
+    sendToMain('dev-status', { running: true, cwd: devServerCwd })
     return { ok: true, cmd: cleaned }
   } catch (e) {
     return { ok: false, error: e.message }
@@ -1007,11 +1029,11 @@ ipcMain.handle('dev-stop', async () => {
     activeProcs.delete(devServerProc)
     devServerProc = null
     devServerCwd = null
-    mainWindow?.webContents.send('cmd-stream', { type: 'info', text: '[Dev server stopped]' })
+    sendToMain('cmd-stream', { type: 'info', text: '[Dev server stopped]' })
   }
   if (previewWindow && !previewWindow.isDestroyed()) previewWindow.close()
   previewWindow = null
-  mainWindow?.webContents.send('dev-status', { running: false, cwd: null })
+  sendToMain('dev-status', { running: false, cwd: null })
   return { ok: true }
 })
 
@@ -1021,8 +1043,8 @@ ipcMain.handle('dev-status', async () => {
 
 // Allow renderer to push diagnostic logs to dev-log
 ipcMain.handle('dev-log-send', async (_, data) => {
-  mainWindow?.webContents.send('dev-log', data)
-  mainWindow?.webContents.send('cmd-stream', { type: data.type || 'info', text: `[diagnóstico] ${data.text}` })
+  sendToMain('dev-log', data)
+  sendToMain('cmd-stream', { type: data.type || 'info', text: `[diagnóstico] ${data.text}` })
 })
 
 // ── Open dev app in a separate Electron window ──────────────────────────
@@ -1102,8 +1124,8 @@ function openPreviewWindow(url) {
         const data = JSON.parse(message.replace('__MCAP_INSPECT__', ''))
         const logLine = formatPreviewInspectLog(data)
         if (logLine) {
-          mainWindow?.webContents.send('dev-log', { type: 'out', text: logLine })
-          mainWindow?.webContents.send('cmd-stream', { type: 'out', text: `[preview] ${logLine}` })
+          sendToMain('dev-log', { type: 'out', text: logLine })
+          sendToMain('cmd-stream', { type: 'out', text: `[preview] ${logLine}` })
         }
       } catch (_) {}
       return
@@ -1115,8 +1137,8 @@ function openPreviewWindow(url) {
     const levels = ['log', 'info', 'warn', 'error']
     const type = levels[level] || 'log'
     const text = `[console.${type}] ${message}  (${sourceId || '?'}:${line})`
-    mainWindow?.webContents.send('dev-log', { type: type === 'error' ? 'err' : type === 'warn' ? 'warn' : 'out', text })
-    mainWindow?.webContents.send('cmd-stream', { type: type === 'error' ? 'err' : 'out', text: `[preview] ${text}` })
+    sendToMain('dev-log', { type: type === 'error' ? 'err' : type === 'warn' ? 'warn' : 'out', text })
+    sendToMain('cmd-stream', { type: type === 'error' ? 'err' : 'out', text: `[preview] ${text}` })
   })
 
   // ── Capture navigation + inject JS error handlers + inspector UI ──
@@ -1124,7 +1146,7 @@ function openPreviewWindow(url) {
     const wc = previewWindow?.webContents
     if (!wc) return
     const u = wc.getURL()
-    mainWindow?.webContents.send('cmd-stream', { type: 'info', text: `[preview] ✅ Cargado: ${u}` })
+    sendToMain('cmd-stream', { type: 'info', text: `[preview] ✅ Cargado: ${u}` })
     const runInject = async () => {
       try {
         await wc.executeJavaScript(`
@@ -1147,7 +1169,7 @@ function openPreviewWindow(url) {
   })
 
   previewWindow.webContents.on('did-fail-load', (e, code, desc, url) => {
-    mainWindow?.webContents.send('cmd-stream', { type: 'err', text: `[preview] ❌ Error de carga: ${url}\n  ${desc} (código ${code})` })
+    sendToMain('cmd-stream', { type: 'err', text: `[preview] ❌ Error de carga: ${url}\n  ${desc} (código ${code})` })
   })
 
   function isLocalDevPreviewUrl(url) {
@@ -1172,7 +1194,7 @@ function openPreviewWindow(url) {
   const netFilter = { urls: ['http://*/*', 'https://*/*'] }
   previewWindow.webContents.session.webRequest.onCompleted(details => {
     if (details.statusCode >= 400) {
-      mainWindow?.webContents.send('cmd-stream', {
+      sendToMain('cmd-stream', {
         type: 'err',
         text: `[preview] [network] ${details.method} ${details.url} → ${details.statusCode}`,
       })
@@ -1180,7 +1202,7 @@ function openPreviewWindow(url) {
   }, netFilter)
   previewWindow.webContents.session.webRequest.onErrorOccurred(details => {
     if (skipPreviewDevNoise(details)) return
-    mainWindow?.webContents.send('cmd-stream', {
+    sendToMain('cmd-stream', {
       type: 'err',
       text: `[preview] [network] ${details.method} ${details.url} → ${details.error}`,
     })
@@ -1188,7 +1210,7 @@ function openPreviewWindow(url) {
 
   previewWindow.on('closed', () => {
     previewWindow = null
-    mainWindow?.webContents.send('cmd-stream', { type: 'info', text: '[preview] Ventana cerrada' })
+    sendToMain('cmd-stream', { type: 'info', text: '[preview] Ventana cerrada' })
   })
 }
 
@@ -1364,8 +1386,8 @@ ipcMain.handle('ai-stream', async (event, { id, url, headers, body }) => {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      event.sender.send('ai-chunk', { id, error: `${res.status}: ${text.slice(0, 400)}` })
-      event.sender.send('ai-chunk', { id, done: true })
+      safeSend(event.sender, 'ai-chunk', { id, error: `${res.status}: ${text.slice(0, 400)}` })
+      safeSend(event.sender, 'ai-chunk', { id, done: true })
       return { ok: false, status: res.status }
     }
 
@@ -1374,13 +1396,13 @@ ipcMain.handle('ai-stream', async (event, { id, url, headers, body }) => {
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      event.sender.send('ai-chunk', { id, chunk: dec.decode(value, { stream: true }) })
+      safeSend(event.sender, 'ai-chunk', { id, chunk: dec.decode(value, { stream: true }) })
     }
-    event.sender.send('ai-chunk', { id, done: true })
+    safeSend(event.sender, 'ai-chunk', { id, done: true })
     return { ok: true }
   } catch (e) {
-    event.sender.send('ai-chunk', { id, error: e.message })
-    event.sender.send('ai-chunk', { id, done: true })
+    safeSend(event.sender, 'ai-chunk', { id, error: e.message })
+    safeSend(event.sender, 'ai-chunk', { id, done: true })
     return { ok: false, error: e.message }
   }
 })
@@ -1407,7 +1429,7 @@ ipcMain.handle('fs-watch-start', (event, dirPath) => {
     if (!fs.existsSync(dirPath)) return { ok: false, error: 'Directory not found' }
     const watcher = fs.watch(dirPath, { recursive: true }, (eventType, filename) => {
       if (filename && !filename.startsWith('.')) {
-        event.sender.send('fs-changed', { dir: dirPath, event: eventType, file: filename })
+        safeSend(event.sender, 'fs-changed', { dir: dirPath, event: eventType, file: filename })
       }
     })
     activeWatchers.set(dirPath, watcher)
