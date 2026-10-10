@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stream player lab (solo contenido autorizado)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; background: #121212; color: #e8e8e8; }
+    h1 { font-size: 1.1rem; font-weight: 600; }
+    .warn { background: #332; border: 1px solid #664; padding: 10px 12px; border-radius: 8px; margin: 12px 0; font-size: 0.85rem; line-height: 1.45; }
+    input[type="text"] { width: min(96vw, 720px); padding: 8px 10px; border-radius: 6px; border: 1px solid #444; background: #1e1e1e; color: #eee; }
+    button { margin-left: 8px; padding: 8px 14px; border-radius: 6px; border: none; background: #3d8fd1; color: #fff; cursor: pointer; }
+    button:hover { filter: brightness(1.08); }
+    video { display: block; margin-top: 16px; width: min(96vw, 960px); max-height: 70vh; background: #000; border-radius: 8px; }
+    #status { margin-top: 10px; font-size: 0.8rem; color: #9aa; white-space: pre-wrap; }
+    code { background: #2a2a2a; padding: 2px 6px; border-radius: 4px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7"></script>
+</head>
+<body>
+  <h1>Laboratorio de reproducción HLS/DASH</h1>
+  <div class="warn">
+    Usá esta página <strong>solo</strong> con manifiestos (<code>.m3u8</code>, <code>.mpd</code>) que tengas derecho a usar.
+    Pensado también para probar interfaces muy simples (ej. un solo canal para quien prefiera no navegar sitios complejos). Muchos streams requieren cookies, tokens o DRM; si falla, puede ser CORS, caducidad o políticas del emisor — no es un defecto de esta demo.
+  </div>
+  <div>
+    <input id="url" type="text" spellcheck="false" placeholder="https://ejemplo-autorizado.com/path/master.m3u8" />
+    <button type="button" id="go">Reproducir</button>
+  </div>
+  <video id="v" controls playsinline></video>
+  <div id="status"></div>
+  <script>
+(function () {
+  var video = document.getElementById('v')
+  var inp = document.getElementById('url')
+  var btn = document.getElementById('go')
+  var status = document.getElementById('status')
+  var hls = null
+
+  function setStatus(t) { status.textContent = t || '' }
+
+  function stop() {
+    if (hls) {
+      try { hls.destroy() } catch (e) {}
+      hls = null
+    }
+    video.removeAttribute('src')
+    video.load()
+  }
+
+  function playUrl(raw) {
+    stop()
+    var url = (raw || '').trim()
+    if (!url) {
+      setStatus('Ingresá una URL.')
+      return
+    }
+    setStatus('Cargando…')
+
+    if (url.indexOf('.mpd') !== -1) {
+      setStatus('Para DASH (.mpd) incorporá Shaka Player o dash.js en esta página; esta demo prioriza HLS con hls.js.')
+      return
+    }
+
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url
+      video.play().catch(function (e) { setStatus('Safari/native HLS: ' + (e && e.message ? e.message : String(e))) })
+      setStatus('Reproducción nativa HLS (Safari / algunos entornos).')
+      return
+    }
+
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+      hls = new Hls({ enableWorker: true, lowLatencyMode: true })
+      hls.loadSource(url)
+      hls.attachMedia(video)
+      hls.on(Hls.Events.MANIFEST_PARSED, function () {
+        setStatus('Manifiesto HLS parseado. Si no hay imagen, revisá red/CORS/token.')
+        video.play().catch(function (e) { setStatus('Play: ' + (e && e.message ? e.message : String(e))) })
+      })
+      hls.on(Hls.Events.ERROR, function (_, data) {
+        if (data && data.fatal) {
+          setStatus('Error HLS fatal: ' + (data.type || '') + ' / ' + (data.details || '') + '\nProbá otra URL o un player con soporte de DRM si aplica.')
+        }
+      })
+      return
+    }
+
+    setStatus('Este navegador no soporta Hls.js ni HLS nativo en este modo.')
+  }
+
+  btn.addEventListener('click', function () { playUrl(inp.value) })
+  inp.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') playUrl(inp.value)
+  })
+})()
+  </script>
+</body>
+</html>

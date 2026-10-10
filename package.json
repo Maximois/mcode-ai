@@ -1,0 +1,41 @@
+{
+  "name": "mcode-ai-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "MCodeAI v2 - Editor con IA + Extension Host VSIX by MC SERVICES",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite --port 5176 --strictPort\" \"wait-on http://localhost:5176 && cross-env NODE_ENV=development electron .\"",
+    "build": "vite build && electron-builder",
+    "preview": "vite build && cross-env NODE_ENV=production electron .",
+    "vite": "vite --port 5176",
+    "electron": "cross-env NODE_ENV=development electron ."
+  },
+  "dependencies": {
+    "@codingame/monaco-vscode-api": "32.0.2",
+    "@codingame/monaco-vscode-css-language-features-default-extension": "32.0.2",
+    "@codingame/monaco-vscode-html-language-features-default-extension": "32.0.2",
+    "@codingame/monaco-vscode-json-language-features-default-extension": "32.0.2",
+    "@codingame/monaco-vscode-markdown-language-features-default-extension": "32.0.2",
+    "@codingame/monaco-vscode-python-default-extension": "32.0.2",
+    "@codingame/monaco-vscode-theme-defaults-default-extension": "32.0.2",
+    "@codingame/monaco-vscode-typescript-language-features-default-extension": "32.0.2",
+    "@electron/asar": "^3.4.1",
+    "adm-zip": "^0.5.17",
+    "express": "^5.2.1",
+    "keytar": "^7.9.0",
+    "monaco-editor": "npm:@codingame/monaco-vscode-editor-api@32.0.2",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "vscode": "npm:@codingame/monaco-vscode-api@32.0.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0",
+    "vite": "^5.4.0",
+    "wait-on": "^8.0.0"
+  }
+}

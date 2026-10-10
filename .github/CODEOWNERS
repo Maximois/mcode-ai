@@ -1,0 +1,19 @@
+# Propietarios de código - asignaciones automáticas para review
+
+# Todos los cambios requieren revisión
+* @tu-usuario
+
+# Configuración principal
+*.json @tu-usuario
+vite.config.js @tu-usuario
+electron/ @tu-usuario
+
+# IA y providers
+src/ai.js @tu-usuario
+
+# Documentación
+*.md @tu-usuario
+docs/ @tu-usuario
+
+# Workflows
+.github/ @tu-usuario
