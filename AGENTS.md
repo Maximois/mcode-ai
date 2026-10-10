@@ -1,4 +1,4 @@
-# Reglas para agentes de IA (Claude Code, Copilot, Cursor, Cline, Roo, Codex, etc.)
+# Reglas para agentes de IA (Claude Code, Gemini, Copilot, Cursor, Cline, Roo, Codex, etc.)
 
 Este archivo lo leen todos los agentes del proyecto. Cumplilo siempre.
 
