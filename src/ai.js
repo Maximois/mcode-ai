@@ -3,6 +3,8 @@
 //  Providers: Ollama · Groq · Gemini · OpenRouter · Zen · Cerebras · Mistral · Together
 // ════════════════════════════════════════════════════════════════════════════
 
+import { buildProjectMap, renderMapForAI, scoreFiles } from './projectMap.js'
+
 // ── Tool calling (text-based, any provider) ───────────────────────────────────
 const _toolNames = '(?:run|readFile|searchProject|listDir|glob|grep|searchWeb|fetchURL|git|createPlan|updatePlan|listPlans|undo|tree|review|rename|createComponent|changelog|learn|remember|experience|timeline|screenshot)'
 const _toolAlt = _toolNames.slice(3, -1)   // 'run|readFile|...' (sin "(?:" ni ")")
@@ -213,6 +215,14 @@ export function getTimeline(timeQuery = '', windowMin = 30) {
   return { events, startWindow, endWindow, targetTime }
 }
 
+// Un readFile sin rango sobre un archivo enorme se come el contexto: se corta y se avisa cómo seguir.
+const READ_CAP_LINES = 600
+function capReadResult(text) {
+  const ls = String(text).split('\n')
+  if (ls.length <= READ_CAP_LINES) return text
+  return ls.slice(0, READ_CAP_LINES).join('\n') + `\n\n[Archivo de ${ls.length} líneas: se muestran las primeras ${READ_CAP_LINES}. Pedí el resto con [TOOL: readFile ruta:${READ_CAP_LINES + 1}-${Math.min(ls.length, READ_CAP_LINES * 2)}] — el mapa del proyecto indica la línea de cada función.]`
+}
+
 async function readFileFromDisk(filePath) {
   try {
     if (typeof window !== 'undefined' && window.api?.readFile) {
@@ -345,7 +355,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
           const sliced = allLines.slice(startLine - 1, endLine)
           return sliced.join('\n') + `\n\n[Mostrando líneas ${startLine}-${endLine} de ${allLines.length}]`
         }
-        return fromDisk
+        return capReadResult(fromDisk)
       }
       // Fallback: buscar en projectFiles (stale pero mejor que nada)
       if (projectFiles) {
@@ -2066,71 +2076,21 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
 
 // ── Índice del proyecto (solo nombres + métricas, sin contenido) ──────────────
 
-// Cache para buildProjectIndex — se invalida cuando projectFiles cambia de referencia
-const _indexCache = { ref: null, result: null }
-function buildProjectIndex(projectFiles) {
+// El índice ES el mapa del proyecto (src/projectMap.js): por tipo, con símbolos y línea, y quién usa a quién.
+const _indexCache = { ref: null, key: '', result: '' }
+function buildProjectIndex(projectFiles, opts = {}) {
   if (!projectFiles) return ''
-  if (_indexCache.ref === projectFiles && _indexCache.result) return _indexCache.result
-  const lines = []
-  const byDir = {}
-  for (const [rel, content] of Object.entries(projectFiles)) {
-    if (content === '[archivo muy grande, omitido]') { lines.push(rel + '  [omitido]'); continue }
-    const lc = content.split('\n').length
-    const symbols = []
-    for (const m of content.matchAll(/^\s*(?:export\s+)?(?:async\s+)?(?:function|const|class|let|var)\s+(\w+)/gm))
-      symbols.push((m[0].includes('class') ? 'class ' : m[0].includes('function') ? 'fn ' : '') + m[1])
-    for (const m of content.matchAll(/ipcMain\.handle\(['"](\w[\w-]+)['"]/g)) symbols.push('ipc:' + m[1])
-    for (const m of content.matchAll(/router\.(get|post|put|delete)\(['"](\/[^'"]+)['"]/g)) symbols.push(m[1].toUpperCase() + ' ' + m[2])
-    for (const m of content.matchAll(/^def\s+(\w+)/gm)) symbols.push('fn ' + m[1])
-    for (const m of content.matchAll(/^class\s+(\w+)/gm)) symbols.push('class ' + m[1])
-    const dir = rel.includes('/') ? rel.split('/').slice(0, -1).join('/') : '.'
-    if (!byDir[dir]) byDir[dir] = []
-    byDir[dir].push({ rel, lc, sym: symbols.slice(0, 8) })
-  }
-  for (const [dir, files] of Object.entries(byDir).sort()) {
-    lines.push(dir === '.' ? '── Raíz' : '── ' + dir + '/')
-    for (const f of files)
-      lines.push('  ' + f.rel.split('/').pop() + '  (' + f.lc + ' lines)' + (f.sym.length ? '  → ' + f.sym.join(', ') : ''))
-  }
-  _indexCache.ref = projectFiles
-  _indexCache.result = lines.join('\n')
-  return _indexCache.result
+  const maxTokens = opts.maxTokens || 5000
+  const key = maxTokens + '|' + (opts.focus || []).join(',')
+  if (_indexCache.ref === projectFiles && _indexCache.key === key) return _indexCache.result
+  const result = renderMapForAI(buildProjectMap(projectFiles), { maxTokens, focus: opts.focus })
+  _indexCache.ref = projectFiles; _indexCache.key = key; _indexCache.result = result
+  return result
 }
 
 export function selectRelevantFiles(projectFiles, userQuestion, activeFile, maxFiles = 5) {
   if (!projectFiles || !userQuestion) return []
-  const normalizedQuestion = userQuestion.toLowerCase().replace(/[^a-z0-9ñáéíóúü_\s]/gi, ' ')
-  const terms = [...new Set(normalizedQuestion.split(/\s+/).filter(Boolean))]
-  if (terms.length === 0) return []
-
-  const activeName = activeFile ? activeFile.replace(/\\/g, '/').split('/').pop() : ''
-  const scores = Object.entries(projectFiles).map(([rel, content]) => {
-    const relLower = rel.toLowerCase()
-    if (!rel || rel === activeFile || rel === activeName || relLower.endsWith('/' + activeName)) {
-      return { rel, score: -Infinity }
-    }
-
-    let score = 0
-    for (const term of terms) {
-      if (relLower.includes(term)) score += 4
-      if (relLower.endsWith('.' + term)) score += 2
-    }
-
-    if (content && content !== '[archivo muy grande, omitido]') {
-      const snippet = content.slice(0, 2000).toLowerCase()
-      for (const term of terms) {
-        if (snippet.includes(term)) score += 1
-      }
-    }
-
-    return { rel, score }
-  })
-
-  return scores
-    .filter(item => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, maxFiles)
-    .map(item => item.rel)
+  return scoreFiles(buildProjectMap(projectFiles), projectFiles, userQuestion, activeFile, maxFiles).map(x => x.rel)
 }
 
 // ── Orquestador ───────────────────────────────────────────────────────────────
@@ -2278,7 +2238,7 @@ CAPACIDADES GENERALES:
 - Investigar errores explorando múltiples hipótesis (leer archivos, grep, buscar web, git log)
 - Razonar paso a paso en problemas complejos, directo cuando hay respuesta clara
 - El archivo activo del usuario YA está incluido en tu contexto — no lo pidas
-- El índice del proyecto solo tiene NOMBRES de archivo (sin contenido) — usá readFile para ver el código
+- El MAPA DEL PROYECTO de tu contexto agrupa los archivos por tipo y marca cada función como nombre:línea — usalo para ir directo con [TOOL: readFile ruta:inicio-fin] en vez de leer archivos enteros
 - Los logs del servidor de desarrollo (salida dev/preview, errores JS) y las capturas \`[UI]\` (clic del usuario sobre un elemento: visibilidad, rect, pointer-events) pueden aparecer en tu contexto — usalos para bugs visuales o de interacción
 - La sección "[Contexto de página web]" incluye HTML/texto visible de la pestaña 🌐 Web o la ventana Preview, más inventario de red si el usuario pulsó 📡 destripe — usala para explicar cómo recrear elementos o integraciones similares
 
@@ -2371,11 +2331,12 @@ REGLAS:
 
   // ── Índice del proyecto ───────────────────────────────────────────────────
   if (projectFiles && Object.keys(projectFiles).length > 0) {
-    const idx  = buildProjectIndex(projectFiles)
+    // El mapa siempre entra (es lo que permite navegar): se reserva su espacio aunque el archivo activo sea enorme.
+    const idx  = buildProjectIndex(projectFiles, { maxTokens: Math.max(1500, Math.min(5000, Math.floor(tokenBudget * 0.2))), focus: [activeFile] })
     const toks = estimateTokens(idx)
-    if (usedTokens + toks < tokenBudget) {
+    if (idx) {
       ctxParts.push(
-        `Índice del proyecto (${Object.keys(projectFiles).length} archivos):\n` +
+        `Mapa del proyecto (${Object.keys(projectFiles).length} archivos):\n` +
         String.fromCharCode(96).repeat(3) + '\n' +
         idx +
         '\n' + String.fromCharCode(96).repeat(3)

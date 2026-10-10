@@ -648,9 +648,10 @@ ipcMain.handle('fs-glob', async (_, { rootDir, pattern }) => {
 ipcMain.handle('fs-project-context', (_, rootDir) => {
   const result = {}
   let totalChars = 0
-  const MAX_FILE_SIZE = 100 * 1024  // 100KB per file
-  const MAX_FILES = 200
-  const MAX_TOTAL_CHARS = 600000    // ~600KB total context
+  const MAX_FILE_SIZE = 400 * 1024  // 400KB per file (el mapa necesita ver los archivos grandes; el modelo los lee por rangos)
+  const MAX_FILES = 400
+  const MAX_TOTAL_CHARS = 1000000   // ~1MB total (en memoria; al modelo solo llega el mapa + lo relevante)
+  const NOISE_FILE = /(^|[-.])(lock|min)\.|\.(map|lock|lockb)$|^(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|npm-shrinkwrap\.json)$/i
 
   function isTextFile(name) {
     const ext = name.split('.').pop()?.toLowerCase()
@@ -680,7 +681,7 @@ ipcMain.handle('fs-project-context', (_, rootDir) => {
         const full = path.join(dir, e.name)
         if (e.isDirectory()) { walk(full, depth + 1); continue }
 
-        if (!isTextFile(e.name)) continue
+        if (!isTextFile(e.name) || NOISE_FILE.test(e.name)) continue
 
         const rel = path.relative(rootDir, full).replace(/\\/g, '/')
         try {
