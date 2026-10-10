@@ -1410,10 +1410,10 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
                     {PROVIDERS[p.key]?.models?.length > 0 ? (
                       <select
                         className="settings-select key-model-input"
-                        value={settings.models[p.key] || PROVIDERS[p.key].defaultModel}
+                        value={settings.models[p.key] || PROVIDERS[settings.provider].defaultModel}
                         onChange={e => setModel(p.key, e.target.value)}
                       >
-                        {PROVIDERS[p.key].models.map(m => (
+                        {PROVIDERS[settings.provider].models.map(m => (
                           <option key={m} value={m}>{m}</option>
                         ))}
                       </select>
@@ -1422,8 +1422,7 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
                         className="key-input key-model-input"
                         value={settings.models[p.key] || ''}
                         onChange={e => setModel(p.key, e.target.value)}
-                        placeholder={PROVIDERS[p.key]?.defaultModel || ''}
-                      />
+                        placeholder={PROVIDERS[settings.provider]?.defaultModel || 'modelo'} />
                     )}
                   </div>
                 )}
@@ -2439,11 +2438,13 @@ function App() {
   // Terminal run command
   const runCmd = async (cmd) => {
     if (!window.api) return
+    const safeCmd = String(cmd || '').trim()
+    if (!safeCmd) return
     setTermBusy(true)
-    setTermLines(p => [...p, { type:'cmd', text: `${new Date().toLocaleTimeString()} ❯ ${cmd}` }])
-    const r = await window.api.runCommand({ command: cmd, cwd: rootDir || undefined })
-    if (r.out) setTermLines(p => [...p, { type:'out', text: `${new Date().toLocaleTimeString()} ${r.out.trim()}` }])
-    if (r.err && r.err !== r.out) setTermLines(p => [...p, { type:'err', text: `${new Date().toLocaleTimeString()} ${r.err.trim()}` }])
+    setTermLines(p => [...p, { type:'cmd', text: `${new Date().toLocaleTimeString()} ❯ ${safeCmd}` }])
+    const r = await window.api.runCommand({ command: safeCmd, cwd: rootDir || undefined })
+    if (r.out) setTermLines(p => [...p, { type:'out', text: `${new Date().toLocaleTimeString()} ${String(r.out || '').trim()}` }])
+    if (r.err && r.err !== r.out) setTermLines(p => [...p, { type:'err', text: `${new Date().toLocaleTimeString()} ${String(r.err || '').trim()}` }])
     if (!r.out && !r.err) setTermLines(p => [...p, { type:'info', text: `${new Date().toLocaleTimeString()} Salió con código ${r.code}` }])
     setTermBusy(false)
   }
@@ -2568,7 +2569,7 @@ function App() {
             <button className={`tb-btn ${showSidebar?'tb-active':''}`} onClick={() => setShowSidebar(p=>!p)} title="Explorador (Ctrl+B)">⊞</button>
             <button className={`tb-btn ${showTerminal?'tb-active':''}`} onClick={() => setShowTerminal(p=>!p)} title="Terminal/Dev (Ctrl+J)">⌨</button>
             <button className={`tb-btn ${showBrowser?'tb-active':''}`}  onClick={() => setShowBrowser(p=>!p)}  title="Navegador integrado del editor (opcional). La app del dev server suele abrirse en ventana Preview aparte.">🌐 Web</button>
-            <button className="tb-btn" onClick={() => focusPreviewInspector()} title="Inspeccionar en la ventana Preview del dev server (no hace falta abrir 🌐 Web)">🎯</button>
+            <button className="tb-btn" onClick={focusPreviewInspector()} title="Inspeccionar en la ventana Preview del dev server (no hace falta abrir 🌐 Web)">🎯</button>
             <button className="tb-btn" onClick={() => runDestripeFromTitlebar()} title="Destripe web: scripts, multimedia, orígenes de red (ventana Preview; si no hay, abre 🌐 Web y usá 📡 ahí)">📡</button>
             <button className={`tb-btn ${showChat?'tb-active':''}`} onClick={() => setShowChat(p=>!p)} title="IA Chat (Ctrl+I)">◈ IA</button>
             <button className={`tb-btn ${showExtensions?'tb-active':''}`}

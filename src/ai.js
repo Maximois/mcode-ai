@@ -733,7 +733,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       if (!result.ok) return `[Error: ${result.error}]`
       return {
         _image: { base64: result.dataUrl, name: `captura-${Date.now()}.png` },
-        text: `📸 Captura realizada (${result.width}x${result.height}, ${result.size} bytes). La imagen se incluyó para análisis visual.`
+        text: `📸 Captura realizada (${result.width}x${result.height}, ${result.size} bytes). La imagen se incluyó para análisis visual.`,
       }
     }
     default:
@@ -1539,7 +1539,7 @@ async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, gem
   if (toolMatches.length > 0) {
     const toolResults = []
     for (const m of toolMatches) {
-      const result = await executeToolCall(m[1], m[2].trim(), { projectFiles, rootDir })
+      const result = await executeToolCall(m[1], String(m[2] ?? '').trim(), { projectFiles, rootDir })
       toolResults.push(result)
     }
     const cleanedZen = normZen.replace(TOOL_RE, '').trim()
@@ -1942,7 +1942,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
     const toolResults = []
     let toolImage = null
     for (const m of matches) {
-      const result = await runToolWrapped(m[1], m[2].trim())
+      const result = await runToolWrapped(m[1], String(m[2] ?? '').trim())
       if (result && result._image) {
         toolImage = result._image.base64
         toolResults.push(result.text || '📸 Captura realizada')
@@ -2480,22 +2480,22 @@ export function parseActions(text) {
   const re = /```(WRITE|PATCH|CREATE|RUN):([^\n`]*?)(?::(\d+):(\d+))?\n([\s\S]*?)```/g
   let m
   while ((m = re.exec(text)) !== null) {
-    const fp   = m[2].trim()
+    const fp = String(m[2] || '').trim()
     const type = m[1]
     if (type === 'RUN') {
-      actions.push({ type, filePath: fp, content: m[5].trim() })
+      actions.push({ type, filePath: fp, content: String(m[5] || '').trim() })
     } else if (!actions.some(a => a.filePath === fp && a.type === type)) {
       actions.push({
         type, filePath: fp,
         startLine: m[3] ? parseInt(m[3]) : null,
         endLine:   m[4] ? parseInt(m[4]) : null,
-        content:   m[5],
+        content:   String(m[5] || ''),
       })
     }
   }
   const readRe = /(?:^|\n)READ:(\S[^\n]*)/g
   while ((m = readRe.exec(text)) !== null) {
-    const path = m[1].trim()
+    const path = String(m[1] || '').trim()
     if (path && !actions.some(a => a.type === 'READ' && a.filePath === path)) {
       actions.push({ type: 'READ', filePath: path, content: '' })
     }

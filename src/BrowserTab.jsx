@@ -443,16 +443,18 @@ function BrowserTab({ onSendToChat, onScreenshotToChat, isVisible, onInspectResu
   }, [activeTab, bookmarks])
 
   const searchWeb = useCallback(async () => {
-    if (!activeTab?.input.trim()) return
+    const rawInput = activeTab?.input
+    if (!rawInput || !String(rawInput).trim()) return
     try {
       const { searchWeb: searchFn } = await import('./ai.js')
-      const results = await searchFn(activeTab.input, 3)
+      const safeInput = String(rawInput).trim()
+      const results = await searchFn(safeInput, 3)
       if (results?.ok && results.results?.length > 0) {
-        const msg = `**Búsqueda:** "${activeTab.input}"\n\n` +
+        const msg = `**Búsqueda:** "${safeInput}"\n\n` +
           results.results.map((r, i) => `${i + 1}. **${r.title || r.snippet}**\n   ${r.url || r.source}`).join('\n\n')
         onSendToChat?.(msg)
       } else {
-        onSendToChat?.(`Sin resultados para: "${activeTab.input}"`)
+        onSendToChat?.(`Sin resultados para: "${safeInput}"`)
       }
     } catch (e) { console.warn('Error en búsqueda web:', e.message) }
   }, [activeTab, onSendToChat])
