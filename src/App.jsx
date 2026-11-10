@@ -13,6 +13,7 @@ import BrowserTab from './BrowserTab.jsx'
 import { formatDestripeLogLine, formatDestripeMarkdown, fetchLiveWebSnapshots } from './webPageDestripe.js'
 import DevPanel from './DevPanel.jsx'
 import ReverseIntelPanel from './ReverseIntelPanel.jsx'
+import LocalToolsPanel from './local-tools/LocalToolsPanel.jsx'
 import ExtensionManager from './ExtensionManager.jsx'
 import { WorkCard, WorkSummary } from './WorkCard.jsx'
 import Editor from './Editor.jsx'
@@ -1884,6 +1885,7 @@ function App() {
   const [showExp, setShowExp] = useState(false)
   const [expSearch, setExpSearch] = useState('')
   const [showTimeline, setShowTimeline] = useState(false)
+  const [showLocalTools, setShowLocalTools] = useState(false)
   const [tlQuery, setTlQuery] = useState('')
   const [tlWindow, setTlWindow] = useState(30)
   const [tlResults, setTlResults] = useState({ events: [], startWindow: null, endWindow: null })
@@ -2751,8 +2753,19 @@ function App() {
                     <span className="dashboard-num">🕐</span>
                     <span className="dashboard-label">Timeline</span>
                   </div>
+                  {settings.localTools !== false && (
+                    <div className="dashboard-item" style={{ cursor:'pointer' }} onClick={() => setShowLocalTools(p => !p)}>
+                      <span className="dashboard-num">🛠</span>
+                      <span className="dashboard-label">Local</span>
+                    </div>
+                  )}
                 </div>
               </div>
+            )}
+
+            {/* Herramientas locales (cero tokens) */}
+            {showLocalTools && settings.localTools !== false && (
+              <LocalToolsPanel rootDir={rootDir} onOpenFile={openDiskFile} onClose={() => setShowLocalTools(false)} />
             )}
 
             {/* Experience Panel */}

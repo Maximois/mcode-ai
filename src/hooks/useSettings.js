@@ -46,6 +46,8 @@ const defaults = {
   reverseIntelNpmAudit: false,
   /** Muestreo file(1)/strings(1) en binarios detectados (útil con imagen docker:intel-image) */
   reverseIntelBinaryStrings: false,
+  /** Herramientas locales (cero tokens): validador, secretos, .gitignore, snapshots */
+  localTools: true,
   wordWrap: 'on',
   minimap: false,
   theme: 'vs-dark',

@@ -90,6 +90,19 @@ contextBridge.exposeInMainWorld('api', {
   asarPack:    (srcDir, destPath)     => ipcRenderer.invoke('asar-pack', { srcDir, destPath }),
   asarList:    (archivePath)          => ipcRenderer.invoke('asar-list', { archivePath }),
 
+  // ── Herramientas locales (cero tokens) ──────────────────────────────────────
+  localTools: {
+    validate:        (p)            => ipcRenderer.invoke('lt-validate', { p }),
+    secretsScan:     (root)         => ipcRenderer.invoke('lt-secrets-scan', { root }),
+    gitignoreRead:   (root)         => ipcRenderer.invoke('lt-gitignore-read', { root }),
+    gitignoreAdd:    (root, rules)  => ipcRenderer.invoke('lt-gitignore-add', { root, rules }),
+    gitignoreRemove: (root, rule)   => ipcRenderer.invoke('lt-gitignore-remove', { root, rule }),
+    snapCreate:      (root, label)  => ipcRenderer.invoke('lt-snap-create', { root, label }),
+    snapList:        (root)         => ipcRenderer.invoke('lt-snap-list', { root }),
+    snapRestore:     (root, id)     => ipcRenderer.invoke('lt-snap-restore', { root, id }),
+    snapDelete:      (root, id)     => ipcRenderer.invoke('lt-snap-delete', { root, id }),
+  },
+
   settingsLoad: () => ipcRenderer.invoke('settings-load'),
   settingsSave: (settings) => ipcRenderer.invoke('settings-save', settings),
   webServerStart: (port) => ipcRenderer.invoke('web-server-start', port),

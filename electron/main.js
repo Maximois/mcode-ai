@@ -396,6 +396,10 @@ ipcMain.handle('fs-delete', (_, p) => { try { fs.unlinkSync(p); return { ok: tru
 ipcMain.handle('fs-rename', (_, { from, to }) => { try { fs.renameSync(from, to); return { ok: true } } catch(e) { return { ok: false, error: e.message } } })
 ipcMain.handle('shell-open', (_, p) => shell.openPath(p))
 
+// ── Herramientas locales (cero tokens): validador, secretos, .gitignore, snapshots ──
+try { require('./local-tools').registerLocalTools(ipcMain, { app }) }
+catch (e) { console.error('[local-tools] no se pudo registrar:', e && e.message) }
+
 // ── ASAR operations ────────────────────────────────────────────────────────────
 const asar = (() => { try { return require('@electron/asar') } catch { return null } })()
 
