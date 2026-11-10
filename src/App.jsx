@@ -2765,7 +2765,7 @@ function App() {
 
             {/* Herramientas locales (cero tokens) */}
             {showLocalTools && settings.localTools !== false && (
-              <LocalToolsPanel rootDir={rootDir} onOpenFile={openDiskFile} onClose={() => setShowLocalTools(false)} />
+              <LocalToolsPanel rootDir={rootDir} activeFilePath={activeTab?.filePath} onOpenFile={openDiskFile} onClose={() => setShowLocalTools(false)} />
             )}
 
             {/* Experience Panel */}

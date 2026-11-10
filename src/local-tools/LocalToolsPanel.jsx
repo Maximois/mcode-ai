@@ -2,6 +2,7 @@
 // No depende del estado interno de App.jsx: recibe solo rootDir, onOpenFile y onClose.
 import React, { useState, useEffect, useCallback } from 'react'
 import './local-tools.css'
+import { IndexTab, DocsTab, ScaffoldTab } from './DocsTabs.jsx'
 
 const SKIP = /(^|[\\/])(node_modules|\.git|dist|dist-electron|build|out|__pycache__)([\\/]|$)/
 const EXT = ['json', 'yml', 'yaml', 'js', 'mjs', 'cjs']
@@ -16,7 +17,7 @@ function fmtTime(ts) {
   try { return new Date(ts).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) } catch { return '' }
 }
 
-export default function LocalToolsPanel({ rootDir, onOpenFile, onClose }) {
+export default function LocalToolsPanel({ rootDir, activeFilePath, onOpenFile, onClose }) {
   const lt = window.api?.localTools
   const [tab, setTab] = useState('errors')
   const [problems, setProblems] = useState({}) // ruta absoluta -> [{line,col,message}]
@@ -129,6 +130,9 @@ export default function LocalToolsPanel({ rootDir, onOpenFile, onClose }) {
         <TabBtn id="secrets">Secretos{secrets?.findings?.length > 0 && <span className="lt-badge">{secrets.findings.length}</span>}</TabBtn>
         <TabBtn id="gitignore">.gitignore</TabBtn>
         <TabBtn id="snaps">Rollbacks</TabBtn>
+        <TabBtn id="index">Índice</TabBtn>
+        <TabBtn id="docs">Docs</TabBtn>
+        <TabBtn id="scaffold">Nuevo</TabBtn>
       </div>
 
       {msg && <div className="lt-muted" style={{ marginBottom: 4 }}>{msg}</div>}
@@ -202,6 +206,10 @@ export default function LocalToolsPanel({ rootDir, onOpenFile, onClose }) {
           </div>
         </div>
       )}
+
+      {tab === 'index' && <IndexTab rootDir={rootDir} activeFilePath={activeFilePath} />}
+      {tab === 'docs' && <DocsTab rootDir={rootDir} activeFilePath={activeFilePath} onOpenFile={onOpenFile} />}
+      {tab === 'scaffold' && <ScaffoldTab rootDir={rootDir} />}
 
       {tab === 'snaps' && (
         <div>

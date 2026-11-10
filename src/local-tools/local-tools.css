@@ -34,3 +34,16 @@
 .lt-x { cursor: pointer; color: var(--text-3); background: none; border: none; font-size: 11px; }
 .lt-x:hover { color: var(--red); }
 .lt-presets { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+
+/* Fase 2 */
+.lt-section { margin: 10px 0 2px; font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); font-weight: 700; border-top: 1px solid var(--border); padding-top: 6px; }
+.lt-section:first-of-type { border-top: none; }
+.lt-pre {
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 4px 6px; margin: 4px 0; max-height: 180px; overflow: auto; white-space: pre-wrap;
+  font-family: var(--font-code); font-size: 9px; color: var(--text-2);
+}
+.lt-select {
+  flex: 1; min-width: 0; background: var(--bg-3); border: 1px solid var(--border);
+  color: var(--text); border-radius: var(--radius); padding: 2px 4px; font-size: 10px;
+}
