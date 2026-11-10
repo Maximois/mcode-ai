@@ -1,0 +1,26 @@
+---
+id: sidebar-split
+category: Interfaz (Electron)
+title: Barra lateral colapsable
+language: html
+description: Layout con barra lateral que se oculta con un botón. Solo HTML, CSS y JS.
+params: width=240|Ancho en px
+---
+<div class="layout">
+  <aside id="sidebar" class="sidebar">Barra lateral</aside>
+  <main class="content">
+    <button id="toggle-sidebar">☰</button>
+    Contenido
+  </main>
+</div>
+<style>
+  .layout { display: flex; height: 100vh; }
+  .sidebar { width: {{width}}px; transition: margin-left .2s; overflow: auto; border-right: 1px solid #333; }
+  .sidebar.collapsed { margin-left: -{{width}}px; }
+  .content { flex: 1; min-width: 0; }
+</style>
+<script>
+  document.getElementById('toggle-sidebar').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('collapsed')
+  })
+</script>

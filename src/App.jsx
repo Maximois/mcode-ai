@@ -1913,6 +1913,16 @@ function App() {
   }, [rootDir, markCodeChanged])
 
   const editorRef   = useRef(null)
+  // Herramientas locales: inserta texto en el cursor del editor activo (devuelve false si no hay editor)
+  const insertTextAtCursor = (text) => {
+    const ed = editorRef.current
+    if (!ed || typeof text !== 'string' || !text) return false
+    const sel = ed.getSelection()
+    if (!sel) return false
+    ed.executeEdits('local-tools', [{ range: sel, text, forceMoveMarkers: true }])
+    ed.focus()
+    return true
+  }
   const searchInputRef = useRef(null)
   const chatSendRef = useRef(null)   // exposed by ChatPanel so browser can inject messages
 
@@ -2765,7 +2775,7 @@ function App() {
 
             {/* Herramientas locales (cero tokens) */}
             {showLocalTools && settings.localTools !== false && (
-              <LocalToolsPanel rootDir={rootDir} activeFilePath={activeTab?.filePath} onOpenFile={openDiskFile} onClose={() => setShowLocalTools(false)} />
+              <LocalToolsPanel rootDir={rootDir} activeFilePath={activeTab?.filePath} onOpenFile={openDiskFile} settings={settings} onInsertText={insertTextAtCursor} onClose={() => setShowLocalTools(false)} />
             )}
 
             {/* Experience Panel */}

@@ -1,0 +1,18 @@
+---
+id: resolve-inside
+category: Sistema de archivos
+title: Sanitizador anti directory traversal
+language: javascript
+description: Une una base con una ruta del usuario y falla si intenta salir de la base (.., rutas absolutas).
+validate: js
+---
+const path = require('path')
+
+function resolveInside(baseDir, userPath) {
+  const base = path.resolve(baseDir)
+  const full = path.resolve(base, String(userPath))
+  if (full !== base && !full.startsWith(base + path.sep)) {
+    throw new Error('Ruta fuera del directorio permitido')
+  }
+  return full
+}

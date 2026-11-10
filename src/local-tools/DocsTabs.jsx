@@ -63,11 +63,13 @@ export function IndexTab({ rootDir, activeFilePath }) {
 }
 
 // ── Documentación: README, JSDoc y licencias ────────────────────────────────
-export function DocsTab({ rootDir, activeFilePath, onOpenFile }) {
+export function DocsTab({ rootDir, activeFilePath, onOpenFile, ai }) {
   const lt = window.api.localTools
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [readme, setReadme] = useState(null)
+  const [intro, setIntro] = useState('')
+  const [descs, setDescs] = useState(null)
   const [jsdoc, setJsdoc] = useState(null)
   const [lic, setLic] = useState(null)
   const [holder, setHolder] = useState('')
@@ -78,23 +80,45 @@ export function DocsTab({ rootDir, activeFilePath, onOpenFile }) {
 
   const run = async (fn) => { setBusy(true); setNote(''); try { await fn() } catch (e) { setNote('Error: ' + e.message) } setBusy(false) }
 
-  const previewReadme = () => run(async () => setReadme(await lt.readme(rootDir, 'preview')))
+  const previewReadme = () => run(async () => setReadme(await lt.readme(rootDir, 'preview', intro)))
   const writeReadme = () => run(async () => {
-    const r = await lt.readme(rootDir, 'write')
+    const r = await lt.readme(rootDir, 'write', intro)
     setNote(r.ok ? `Escrito ${r.written}${r.written !== 'README.md' ? ' (ya existía un README.md; no se pisó)' : ''}` : r.error)
   })
 
+  const aiIntro = () => run(async () => {
+    const r = await lt.writerIntro(rootDir, ai.url, ai.model)
+    if (r.ok) { setIntro(r.text); setReadme(await lt.readme(rootDir, 'preview', r.text)) } else setNote(r.error)
+  })
+  const aiDescribe = () => run(async () => {
+    const r = await lt.jsdocDescribe(rootDir, activeFilePath, ai.url, ai.model)
+    if (r.ok) {
+      setDescs(r.descs)
+      setNote(`${Object.keys(r.descs).length} descripciones redactadas${r.limited ? ' (máximo 12 por tanda)' : ''}${r.errors?.length ? ` · ${r.errors.length} fallaron` : ''}`)
+    } else setNote(r.error)
+  })
+  // Muestra en la vista previa la descripción redactada por la IA (primera línea del bloque)
+  const withDesc = (item) => {
+    const d = descs?.[item.name]
+    if (!d) return item.block
+    const lines = item.block.split('\n')
+    lines[1] = lines[1].replace(/^(\s*\*\s).*$/, '$1' + d.replace(/\$/g, '$$$$'))
+    return lines.join('\n')
+  }
+
   const previewJsdoc = () => run(async () => {
     const r = await lt.jsdocPreview(rootDir, activeFilePath)
+    setDescs(null)
     setJsdoc(r)
     if (!r.ok) setNote(r.error)
   })
   const applyJsdoc = () => run(async () => {
     if (!window.confirm(`Se insertarán ${jsdoc.count} bloques JSDoc en ${baseName(activeFilePath)}.\n\nGuardá antes los cambios pendientes del archivo. Se crea un snapshot previo para poder volver atrás en Rollbacks.`)) return
-    const r = await lt.jsdocApply(rootDir, activeFilePath)
+    const r = await lt.jsdocApply(rootDir, activeFilePath, descs)
     if (r.ok) {
       setNote(`Insertados ${r.inserted} bloques. Snapshot previo guardado.`)
       setJsdoc(null)
+      setDescs(null)
       onOpenFile?.({ path: activeFilePath, name: baseName(activeFilePath) }) // refresca la pestaña si no tiene cambios sin guardar
     } else setNote(r.error)
   })
@@ -120,18 +144,21 @@ export function DocsTab({ rootDir, activeFilePath, onOpenFile }) {
       <div className="lt-row">
         <button className="sb-btn" onClick={previewReadme} disabled={busy}>Previsualizar</button>
         <button className="sb-btn" onClick={writeReadme} disabled={busy}>Escribir</button>
+        <button className="sb-btn" onClick={aiIntro} disabled={busy || !ai?.ready} title={ai?.ready ? 'Redacta una introducción con Ollama local' : 'Ollama no disponible (pestaña IA local)'}>✨ Intro</button>
       </div>
+      {intro && <textarea className="lt-textarea" value={intro} onChange={e => setIntro(e.target.value)} rows={3} title="Introducción redactada por la IA local: editala si querés" />}
       {readme?.ok && <pre className="lt-pre">{readme.markdown}</pre>}
 
       <div className="lt-section">JSDoc del archivo activo</div>
       <div className="lt-muted">{activeFilePath ? <>Documenta funciones sin JSDoc en <span className="lt-file">{baseName(activeFilePath)}</span>.</> : 'Abrí un archivo JS/TS.'}</div>
       <div className="lt-row">
         <button className="sb-btn" onClick={previewJsdoc} disabled={busy || !activeFilePath}>Previsualizar</button>
+        <button className="sb-btn" onClick={aiDescribe} disabled={busy || !jsdoc?.count || !ai?.ready} title={ai?.ready ? 'Redacta las descripciones con Ollama local' : 'Ollama no disponible (pestaña IA local)'}>✨ Describir</button>
         <button className="sb-btn" onClick={applyJsdoc} disabled={busy || !jsdoc?.count}>Aplicar ({jsdoc?.count || 0})</button>
       </div>
       {jsdoc?.ok && (jsdoc.count === 0
         ? <div className="lt-ok">✓ Todas las funciones ya tienen JSDoc</div>
-        : <pre className="lt-pre">{jsdoc.items.slice(0, 3).map(i => `// línea ${i.line}\n${i.block}`).join('\n\n')}{jsdoc.count > 3 ? `\n\n… y ${jsdoc.count - 3} más` : ''}</pre>)}
+        : <pre className="lt-pre">{jsdoc.items.slice(0, 3).map(i => `// línea ${i.line}\n${withDesc(i)}`).join('\n\n')}{jsdoc.count > 3 ? `\n\n… y ${jsdoc.count - 3} más` : ''}</pre>)}
 
       <div className="lt-section">Encabezado de licencia</div>
       <div className="lt-muted">Agrega copyright + SPDX a los .js/.ts/.css/.py del proyecto. Omite los que ya lo tienen.</div>

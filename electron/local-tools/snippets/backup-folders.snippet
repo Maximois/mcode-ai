@@ -1,0 +1,19 @@
+---
+id: backup-folders
+category: Automatización del sistema
+title: Respaldo de carpeta (.bat)
+language: batch
+description: Copia una carpeta a otra con fecha y hora, sin node_modules ni .git. Usa robocopy y PowerShell.
+params: source=.|Carpeta origen; dest=..\backups|Carpeta destino
+---
+@echo off
+setlocal
+set "SOURCE={{source}}"
+set "DEST={{dest}}"
+for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "TS=%%I"
+robocopy "%SOURCE%" "%DEST%\backup_%TS%" /E /R:1 /W:1 /XD node_modules .git /NFL /NDL /NJH /NJS
+if %ERRORLEVEL% GEQ 8 (
+  echo Error en la copia
+  exit /b 1
+)
+echo Respaldo creado en "%DEST%\backup_%TS%"

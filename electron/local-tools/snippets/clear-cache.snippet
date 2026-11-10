@@ -1,0 +1,15 @@
+---
+id: clear-cache
+category: Automatización del sistema
+title: Limpiar cachés de build (.bat)
+language: batch
+description: Borra solo cachés regenerables (.vite, node_modules\.cache, .parcel-cache) de la carpeta actual.
+---
+@echo off
+for %%D in (.vite node_modules\.cache .parcel-cache) do (
+  if exist "%%D" (
+    rmdir /s /q "%%D"
+    echo Borrado %%D
+  )
+)
+echo Listo

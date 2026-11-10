@@ -52,6 +52,22 @@ function hasReturn(lines, i, indent, arrowExpr) {
   return false
 }
 
+// Código de la función que empieza en la línea i: se corta cuando se cierran sus llaves
+// (aproximado: no distingue llaves dentro de strings) o a las 20 líneas.
+function sliceFunction(lines, i) {
+  let depth = 0, seen = false
+  const out = []
+  for (let j = i; j < Math.min(lines.length, i + 20); j++) {
+    out.push(lines[j])
+    for (const ch of lines[j]) {
+      if (ch === '{') { depth++; seen = true } else if (ch === '}') depth--
+    }
+    if (!seen && j === i && !/[({,]\s*$/.test(lines[j].trimEnd())) break // arrow de una expresión
+    if (seen && depth <= 0) break
+  }
+  return out.join('\n')
+}
+
 function isDocumented(lines, i) {
   for (let j = i - 1; j >= 0; j--) {
     const t = lines[j].trim()
@@ -82,7 +98,7 @@ function buildPlan(text) {
     if (paramLines.length) body.push(`${indent} *`, ...paramLines.map(l => indent + l))
     if (/\breturn\s+[^;\s}]/.test(line) || hasReturn(lines, i, indent, arrowExpr)) body.push(`${indent} * @returns {*}`)
     body.push(`${indent} */`)
-    plan.push({ line: i + 1, name, block: body.join('\n'), _lines: body })
+    plan.push({ line: i + 1, name, block: body.join('\n'), _lines: body, _indent: indent, source: sliceFunction(lines, i) })
   }
   return { lines, plan }
 }
@@ -101,16 +117,35 @@ function previewJsdoc(filePath) {
   return { ok: true, count: plan.length, items: plan.slice(0, 50).map(({ line, name, block }) => ({ line, name, block })) }
 }
 
+// Funciones sin documentar con su código, para que el redactor local escriba la descripción.
+function itemsForWriter(filePath) {
+  const r = loadJs(filePath)
+  if (r.error) return { ok: false, error: r.error }
+  const { plan } = buildPlan(r.text)
+  return { ok: true, items: plan.map(({ name, source }) => ({ name, source })) }
+}
+
+function safeDescription(s) {
+  return String(s || '').split('\n')[0].replace(/\*\//g, '').replace(/\/\*/g, '').trim().slice(0, 120)
+}
+
 // Inserta de abajo hacia arriba para no desplazar las líneas pendientes.
-function applyJsdoc(filePath) {
+// descs (opcional): { nombreFuncion: 'descripción' } reemplaza la descripción generada del nombre.
+function applyJsdoc(filePath, descs) {
   const r = loadJs(filePath)
   if (r.error) return { ok: false, error: r.error }
   const eol = r.text.includes('\r\n') ? '\r\n' : '\n'
   const { lines, plan } = buildPlan(r.text)
   if (!plan.length) return { ok: true, inserted: 0 }
+  if (descs && typeof descs === 'object') {
+    for (const item of plan) {
+      const d = safeDescription(Object.prototype.hasOwnProperty.call(descs, item.name) ? descs[item.name] : '')
+      if (d) item._lines[1] = `${item._indent} * ${d}`
+    }
+  }
   for (const item of [...plan].reverse()) lines.splice(item.line - 1, 0, ...item._lines)
   fs.writeFileSync(filePath, lines.join(eol), 'utf8')
   return { ok: true, inserted: plan.length }
 }
 
-module.exports = { previewJsdoc, applyJsdoc, buildPlan }
+module.exports = { previewJsdoc, applyJsdoc, buildPlan, itemsForWriter }

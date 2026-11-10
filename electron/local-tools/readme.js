@@ -36,11 +36,12 @@ function collectMeta(root) {
   }
 }
 
-function buildMarkdown(meta) {
+function buildMarkdown(meta, intro) {
   const L = []
   L.push(`# ${meta.name}`)
   if (meta.version) L.push('', `Versión \`${meta.version}\``)
   L.push('', meta.description || '_Agregá aquí una descripción del proyecto._')
+  if (intro) L.push('', intro)
   const scripts = Object.entries(meta.scripts)
   if (meta.hasPackageJson) {
     L.push('', '## Instalación', '', '```bash', 'npm install', '```')
@@ -64,9 +65,9 @@ function buildMarkdown(meta) {
  * mode 'preview' no escribe. mode 'write' nunca pisa un README.md existente:
  * en ese caso escribe README.generated.md.
  */
-function generateReadme(root, mode = 'preview') {
+function generateReadme(root, mode = 'preview', intro = '') {
   const meta = collectMeta(root)
-  const markdown = buildMarkdown(meta)
+  const markdown = buildMarkdown(meta, String(intro || '').replace(/\s+/g, ' ').trim().slice(0, 600))
   if (mode !== 'write') return { ok: true, markdown, meta }
   const target = fs.existsSync(path.join(root, 'README.md')) ? 'README.generated.md' : 'README.md'
   fs.writeFileSync(path.join(root, target), markdown, 'utf8')

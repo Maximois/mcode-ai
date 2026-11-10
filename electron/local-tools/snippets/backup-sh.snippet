@@ -1,0 +1,16 @@
+---
+id: backup-sh
+category: Automatización del sistema
+title: Respaldo de carpeta (Bash)
+language: bash
+description: Crea un .tar.gz con fecha de una carpeta, sin node_modules ni .git.
+params: source=.|Carpeta origen; dest=../backups|Carpeta destino
+---
+#!/usr/bin/env bash
+set -euo pipefail
+SOURCE="{{source}}"
+DEST="{{dest}}"
+TS="$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$DEST"
+tar --exclude=node_modules --exclude=.git -czf "$DEST/backup_$TS.tar.gz" -C "$SOURCE" .
+echo "Respaldo creado en $DEST/backup_$TS.tar.gz"

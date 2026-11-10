@@ -1,0 +1,19 @@
+---
+id: http-server
+category: Redes y servidores
+title: Servidor HTTP mínimo
+language: javascript
+description: Servidor HTTP local que responde JSON. Solo escucha en 127.0.0.1.
+params: port=3000|Puerto
+validate: js
+---
+const http = require('http')
+
+const PORT = {{port}}
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+  res.end(JSON.stringify({ ok: true, path: req.url }))
+})
+
+server.listen(PORT, '127.0.0.1', () => console.log(`Servidor en http://127.0.0.1:${PORT}`))

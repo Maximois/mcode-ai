@@ -1,0 +1,10 @@
+---
+id: kill-hanging
+category: Automatización del sistema
+title: Cerrar un proceso colgado (.bat)
+language: batch
+description: Termina solo los procesos con ese nombre que estén sin responder. No toca el resto de las aplicaciones.
+params: process=electron.exe|Nombre del proceso
+---
+@echo off
+taskkill /F /FI "STATUS eq NOT RESPONDING" /FI "IMAGENAME eq {{process}}"

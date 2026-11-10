@@ -1,0 +1,46 @@
+---
+id: p2p-file-transfer
+category: Redes y servidores
+title: Transferencia de archivos P2P por TCP
+language: javascript
+description: Enviar y recibir un archivo entre dos equipos. El receptor usa solo el nombre base (evita rutas con ..).
+validate: js
+---
+const net = require('net')
+const fs = require('fs')
+const path = require('path')
+
+// Protocolo: una línea JSON { name, size } y después los bytes del archivo.
+function receiveFile(port, destDir) {
+  const server = net.createServer((socket) => {
+    let header = Buffer.alloc(0), out = null, got = 0, size = 0
+    socket.on('data', (chunk) => {
+      if (!out) {
+        header = Buffer.concat([header, chunk])
+        const nl = header.indexOf(10)
+        if (nl === -1) return
+        try {
+          const meta = JSON.parse(header.subarray(0, nl).toString('utf8'))
+          size = Number(meta.size)
+          out = fs.createWriteStream(path.join(destDir, path.basename(String(meta.name))))
+        } catch { return socket.destroy() }
+        chunk = header.subarray(nl + 1)
+      }
+      got += chunk.length
+      out.write(chunk)
+      if (got >= size) { out.end(); socket.end() }
+    })
+    socket.on('error', (e) => console.error(e.message))
+  })
+  return server.listen(port)
+}
+
+function sendFile(filePath, host, port) {
+  const socket = net.connect(port, host, () => {
+    const size = fs.statSync(filePath).size
+    socket.write(JSON.stringify({ name: path.basename(filePath), size }) + '\n')
+    fs.createReadStream(filePath).pipe(socket)
+  })
+  socket.on('error', (e) => console.error(e.message))
+  return socket
+}
