@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import './local-tools.css'
 import { IndexTab, DocsTab, ScaffoldTab } from './DocsTabs.jsx'
 import { SnippetsTab, AiTab } from './SnippetsAiTabs.jsx'
+import MaintenanceTab from './MaintenanceTab.jsx'
 import { useOllama } from './useOllama.js'
 
 function joinPath(dir, file) {
@@ -108,6 +109,7 @@ export default function LocalToolsPanel({ rootDir, activeFilePath, onOpenFile, o
         <TabBtn id="docs">Docs</TabBtn>
         <TabBtn id="scaffold">Nuevo</TabBtn>
         <TabBtn id="snippets">Snippets</TabBtn>
+        <TabBtn id="maint">Mantenimiento</TabBtn>
         <TabBtn id="ai">IA local</TabBtn>
       </div>
 
@@ -188,6 +190,7 @@ export default function LocalToolsPanel({ rootDir, activeFilePath, onOpenFile, o
       {tab === 'scaffold' && <ScaffoldTab rootDir={rootDir} />}
       {tab === 'snippets' && <SnippetsTab rootDir={rootDir} activeFilePath={activeFilePath} ai={ai} onInsertText={onInsertText} />}
       {tab === 'ai' && <AiTab rootDir={rootDir} ai={ai} />}
+      {tab === 'maint' && <MaintenanceTab rootDir={rootDir} onOpenFile={onOpenFile} />}
 
       {tab === 'snaps' && (
         <div>

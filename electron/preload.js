@@ -117,6 +117,12 @@ contextBridge.exposeInMainWorld('api', {
     writerCommit:    (root, url, model) => ipcRenderer.invoke('lt-writer-commit', { root, url, model }),
     writerIntro:     (root, url, model) => ipcRenderer.invoke('lt-writer-intro', { root, url, model }),
     jsdocDescribe:   (root, p, url, model) => ipcRenderer.invoke('lt-jsdoc-describe', { root, p, url, model }),
+    semverInfo:      (root)         => ipcRenderer.invoke('lt-semver-info', { root }),
+    semverBump:      (root, level)  => ipcRenderer.invoke('lt-semver-bump', { root, level }),
+    changelog:       (root, version, mode) => ipcRenderer.invoke('lt-changelog', { root, version, mode }),
+    cleanScan:       (root, cats)   => ipcRenderer.invoke('lt-clean-scan', { root, cats }),
+    cleanApply:      (root, cats)   => ipcRenderer.invoke('lt-clean-apply', { root, cats }),
+    linksScan:       (root)         => ipcRenderer.invoke('lt-links-scan', { root }),
   },
 
   settingsLoad: () => ipcRenderer.invoke('settings-load'),

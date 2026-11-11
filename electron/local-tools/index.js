@@ -14,6 +14,9 @@ const readme = require('./readme')
 const scaffold = require('./scaffold')
 const snippets = require('./snippets')
 const writer = require('./writer')
+const semver = require('./semver')
+const cleaner = require('./cleaner')
+const linkcheck = require('./linkcheck')
 
 function insideRoot(root, p) {
   const r = path.resolve(root)
@@ -95,6 +98,14 @@ function registerLocalTools(ipcMain, { app }) {
     }
     return { ok: true, code: r.code, original: code }
   }))
+
+  // ── Fase 5: versionado, limpieza y enlaces ──
+  ipcMain.handle('lt-semver-info',     wrap(({ root }) => semver.info(needRoot(root))))
+  ipcMain.handle('lt-semver-bump',     wrap(({ root, level }) => semver.applyBump(needRoot(root), level)))
+  ipcMain.handle('lt-changelog',       wrap(({ root, version, mode }) => semver.changelog(needRoot(root), version, mode === 'write' ? 'write' : 'preview')))
+  ipcMain.handle('lt-clean-scan',      wrap(({ root, cats }) => cleaner.scanProject(needRoot(root), Array.isArray(cats) ? cats : [])))
+  ipcMain.handle('lt-clean-apply',     wrap(({ root, cats }) => cleaner.applyClean(needRoot(root), Array.isArray(cats) ? cats : [])))
+  ipcMain.handle('lt-links-scan',      wrap(({ root }) => linkcheck.scanLinks(needRoot(root))))
 
   ipcMain.handle('lt-ollama-status',   wrap((a) => writer.status(a)))
   ipcMain.handle('lt-writer-commit',   wrap(({ root, url, model }) => writer.commitMessage({ root: needRoot(root), url, model })))
