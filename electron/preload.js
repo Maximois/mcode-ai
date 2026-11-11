@@ -101,6 +101,7 @@ contextBridge.exposeInMainWorld('api', {
     snapList:        (root)         => ipcRenderer.invoke('lt-snap-list', { root }),
     snapRestore:     (root, id)     => ipcRenderer.invoke('lt-snap-restore', { root, id }),
     snapDelete:      (root, id)     => ipcRenderer.invoke('lt-snap-delete', { root, id }),
+    snapAuto:        (root, reason) => ipcRenderer.invoke('lt-snap-auto', { root, reason }),
     indexFile:       (root, p)      => ipcRenderer.invoke('lt-index-file', { root, p }),
     jsdocPreview:    (root, p)      => ipcRenderer.invoke('lt-jsdoc-preview', { root, p }),
     jsdocApply:      (root, p, descs) => ipcRenderer.invoke('lt-jsdoc-apply', { root, p, descs }),

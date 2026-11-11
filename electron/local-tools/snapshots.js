@@ -9,6 +9,10 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-electron', 'bui
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 const MAX_TOTAL_BYTES = 150 * 1024 * 1024 // tope por snapshot (máquina de 8 GB)
 const KEEP_DEFAULT = 15
+const KEEP_AUTO = 5 // los automáticos tienen su propio cupo: no desplazan a los manuales
+const AUTO_PREFIX = 'auto-'
+const AUTO_MIN_GAP_MS = 60 * 1000
+const lastAuto = new Map() // root -> timestamp del último snapshot automático
 
 function projectDir(baseDir, root) {
   const id = crypto.createHash('sha1').update(path.resolve(root).toLowerCase()).digest('hex').slice(0, 12)
@@ -56,13 +60,18 @@ function listSnapshots(baseDir, root) {
   return { ok: true, snapshots }
 }
 
-function prune(baseDir, root, keep) {
+function isAutoLabel(label) { return String(label || '').startsWith(AUTO_PREFIX) }
+
+// Poda por clase: automáticos y manuales/de seguridad se cuentan por separado.
+function prune(baseDir, root, keep, auto) {
   const { snapshots } = listSnapshots(baseDir, root)
   const dir = projectDir(baseDir, root)
-  for (const s of snapshots.slice(keep)) { try { fs.unlinkSync(path.join(dir, s.id + '.zip')) } catch {} }
+  const same = snapshots.filter(s => isAutoLabel(s.label) === !!auto)
+  for (const s of same.slice(keep)) { try { fs.unlinkSync(path.join(dir, s.id + '.zip')) } catch {} }
 }
 
 function createSnapshot(baseDir, root, label, keep = KEEP_DEFAULT) {
+  const auto = isAutoLabel(safeLabel(label))
   if (!root || !fs.existsSync(root)) return { ok: false, error: 'Carpeta de proyecto no encontrada' }
   const { files, truncated } = collectFiles(root)
   if (!files.length) return { ok: false, error: 'No hay archivos para respaldar' }
@@ -77,7 +86,7 @@ function createSnapshot(baseDir, root, label, keep = KEEP_DEFAULT) {
   const lbl = safeLabel(label)
   const id = `${Date.now()}${lbl ? '__' + lbl : ''}`
   zip.writeZip(path.join(dir, id + '.zip'))
-  prune(baseDir, root, keep)
+  prune(baseDir, root, auto ? KEEP_AUTO : keep, auto)
   return { ok: true, id, files: files.length, truncated }
 }
 
@@ -111,4 +120,15 @@ function deleteSnapshot(baseDir, root, id) {
   try { fs.unlinkSync(file); return { ok: true } } catch (e) { return { ok: false, error: e.message } }
 }
 
-module.exports = { createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot }
+// Snapshot automático antes de un lote grande del agente. Si ya se hizo uno hace menos de un
+// minuto para este proyecto, se reutiliza (el agente puede aplicar varios lotes seguidos).
+function autoSnapshot(baseDir, root, reason) {
+  const key = path.resolve(root).toLowerCase()
+  const last = lastAuto.get(key) || 0
+  if (Date.now() - last < AUTO_MIN_GAP_MS) return { ok: true, skipped: true }
+  const r = createSnapshot(baseDir, root, AUTO_PREFIX + (safeLabel(reason) || 'agente'))
+  if (r.ok) lastAuto.set(key, Date.now())
+  return r
+}
+
+module.exports = { createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot, autoSnapshot }

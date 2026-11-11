@@ -48,6 +48,7 @@ function registerLocalTools(ipcMain, { app }) {
   ipcMain.handle('lt-snap-create',     wrap(({ root, label }) => snapshots.createSnapshot(baseDir, needRoot(root), label)))
   ipcMain.handle('lt-snap-list',       wrap(({ root }) => snapshots.listSnapshots(baseDir, needRoot(root))))
   ipcMain.handle('lt-snap-restore',    wrap(({ root, id }) => snapshots.restoreSnapshot(baseDir, needRoot(root), id)))
+  ipcMain.handle('lt-snap-auto',       wrap(({ root, reason }) => snapshots.autoSnapshot(baseDir, needRoot(root), reason)))
   ipcMain.handle('lt-snap-delete',     wrap(({ root, id }) => snapshots.deleteSnapshot(baseDir, needRoot(root), id)))
 
   // ── Fase 2: índice, documentación, licencias, scaffolding ──

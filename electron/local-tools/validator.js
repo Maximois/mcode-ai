@@ -2,6 +2,7 @@
 // Soporta: .json, .yml/.yaml (chequeo ligero), .js/.mjs/.cjs (node --check).
 const fs = require('fs')
 const path = require('path')
+const vm = require('vm')
 const { spawn } = require('child_process')
 
 const MAX_BYTES = 2 * 1024 * 1024 // no validar archivos gigantes
@@ -82,8 +83,22 @@ function validateYaml(text) {
   return errors
 }
 
-function validateJsSyntax(filePath) {
+// Proceso hijo (node --check): solo para ESM, que vm.compileFunction no puede analizar.
+// Máximo 2 a la vez para no cargar máquinas con poca RAM.
+let running = 0
+const waiting = []
+function limited(fn) {
   return new Promise((resolve) => {
+    const run = async () => {
+      running++
+      try { resolve(await fn()) } finally { running--; const next = waiting.shift(); if (next) next() }
+    }
+    if (running < 2) run(); else waiting.push(run)
+  })
+}
+
+function validateJsViaProcess(filePath) {
+  return limited(() => new Promise((resolve) => {
     // process.execPath + ELECTRON_RUN_AS_NODE funciona tanto en dev como empaquetado
     const child = spawn(process.execPath, ['--check', filePath], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
@@ -105,7 +120,27 @@ function validateJsSyntax(filePath) {
         message: (msgM ? msgM[1] : stderr.trim().split('\n').pop()) || 'Error de sintaxis',
       }])
     })
-  })
+  }))
+}
+
+// Errores que indican módulo ES (o await de nivel superior) en vez de un error real de sintaxis.
+const ESM_HINT = /import statement outside a module|Unexpected token 'export'|Unexpected token 'import'|import\.meta|await is only valid|Unexpected reserved word|Cannot use 'import/i
+
+// CJS en proceso con vm.compileFunction (solo analiza, no ejecuta): sin crear procesos por archivo.
+async function validateJsSyntax(filePath) {
+  if (path.extname(filePath).toLowerCase() === '.mjs') return validateJsViaProcess(filePath)
+  let code
+  try { code = fs.readFileSync(filePath, 'utf8') } catch { return [] }
+  code = code.replace(/^﻿/, '').replace(/^#!.*/, '//')
+  try {
+    vm.compileFunction(code, ['exports', 'require', 'module', '__filename', '__dirname'], { filename: path.basename(filePath) })
+    return []
+  } catch (e) {
+    const msg = String((e && e.message) || e)
+    if (ESM_HINT.test(msg)) return validateJsViaProcess(filePath)
+    const lineM = String((e && e.stack) || '').match(/:(\d+)\r?\n/)
+    return [{ line: lineM ? Number(lineM[1]) : 1, col: 1, message: 'SyntaxError: ' + msg }]
+  }
 }
 
 const SUPPORTED = new Set(['.json', '.yml', '.yaml', '.js', '.mjs', '.cjs'])

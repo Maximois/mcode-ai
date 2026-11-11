@@ -14,6 +14,7 @@ import { formatDestripeLogLine, formatDestripeMarkdown, fetchLiveWebSnapshots } 
 import DevPanel from './DevPanel.jsx'
 import ReverseIntelPanel from './ReverseIntelPanel.jsx'
 import LocalToolsPanel from './local-tools/LocalToolsPanel.jsx'
+import { useLocalValidation, useEditorMarkers } from './local-tools/useLocalValidation.js'
 import ExtensionManager from './ExtensionManager.jsx'
 import { WorkCard, WorkSummary } from './WorkCard.jsx'
 import Editor from './Editor.jsx'
@@ -1503,6 +1504,11 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
                 onChange={e => updateSettings({ autoApplyAiRun: e.target.checked })} />
               <span>También ejecutar bloques RUN (comandos en tu máquina — usar con cuidado)</span>
             </label>
+            <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+              <input type="checkbox" checked={settings.autoSnapshotAgent !== false}
+                onChange={e => updateSettings({ autoSnapshotAgent: e.target.checked })} />
+              <span>Snapshot automático antes de que el agente cambie 2 o más archivos (Rollbacks)</span>
+            </label>
           </div>
 
           <div className="settings-section">
@@ -1913,6 +1919,10 @@ function App() {
   }, [rootDir, markCodeChanged])
 
   const editorRef   = useRef(null)
+  // Herramientas locales: validación local al guardar/abrir + marcas de error en el editor
+  const localToolsOn = settings.localTools !== false && !!rootDir && !!window.api?.localTools
+  const localProblems = useLocalValidation({ rootDir, enabled: localToolsOn, activeFilePath: activeTab?.filePath })
+  useEditorMarkers({ editorRef, activeTab, problems: localProblems, enabled: localToolsOn && settings.inlineErrors !== false })
   // Herramientas locales: inserta texto en el cursor del editor activo (devuelve false si no hay editor)
   const insertTextAtCursor = (text) => {
     const ed = editorRef.current
@@ -2500,6 +2510,19 @@ function App() {
 
   const applyAll = useCallback(async (actions, opts = {}) => {
     const errors = []
+    // Herramientas locales: snapshot automático antes de un lote que toca 2+ archivos.
+    // Es "mejor esfuerzo": si falla, no bloquea al agente (solo avisa en el terminal).
+    const fileTouches = actions.filter(a => a.type !== 'RUN' && a.type !== 'READ')
+    if (fileTouches.length >= 2 && rootDir && settings.localTools !== false && settings.autoSnapshotAgent !== false && window.api?.localTools?.snapAuto) {
+      try {
+        const snap = await window.api.localTools.snapAuto(rootDir, 'agente')
+        if (snap && snap.ok === false) {
+          setTermLines(p => [...p, { type: 'info', text: `${new Date().toLocaleTimeString()} ⚠ No se pudo crear el snapshot previo: ${snap.error}` }])
+        } else if (snap?.ok && !snap.skipped) {
+          setTermLines(p => [...p, { type: 'info', text: `${new Date().toLocaleTimeString()} 🛟 Snapshot previo guardado (Herramientas locales → Rollbacks)` }])
+        }
+      } catch (e) { console.warn('[LOCAL-TOOLS] snapshot previo:', e?.message) }
+    }
     for (const a of actions) {
       const err = await confirmAction(a)
       if (err) errors.push(err)
@@ -2531,7 +2554,7 @@ function App() {
     const errText = errors.length > 0 ? errors.join('\n\n') : ''
     if (errText) opts.onError?.(errText)
     return { ok: errors.length === 0, errors, applied: actions.length - errors.length }
-  }, [confirmAction, rootDir])
+  }, [confirmAction, rootDir, settings.localTools, settings.autoSnapshotAgent])
 
   // Terminal run command
   const runCmd = async (cmd) => {
@@ -2766,7 +2789,7 @@ function App() {
                   {settings.localTools !== false && (
                     <div className="dashboard-item" style={{ cursor:'pointer' }} onClick={() => setShowLocalTools(p => !p)}>
                       <span className="dashboard-num">🛠</span>
-                      <span className="dashboard-label">Local</span>
+                      <span className="dashboard-label">Local{Object.keys(localProblems).length > 0 ? ` · ${Object.keys(localProblems).length} ✗` : ''}</span>
                     </div>
                   )}
                 </div>
@@ -2775,7 +2798,7 @@ function App() {
 
             {/* Herramientas locales (cero tokens) */}
             {showLocalTools && settings.localTools !== false && (
-              <LocalToolsPanel rootDir={rootDir} activeFilePath={activeTab?.filePath} onOpenFile={openDiskFile} settings={settings} onInsertText={insertTextAtCursor} onClose={() => setShowLocalTools(false)} />
+              <LocalToolsPanel rootDir={rootDir} activeFilePath={activeTab?.filePath} onOpenFile={openDiskFile} settings={settings} onInsertText={insertTextAtCursor} problems={localProblems} onClose={() => setShowLocalTools(false)} />
             )}
 
             {/* Experience Panel */}

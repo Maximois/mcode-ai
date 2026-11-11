@@ -48,6 +48,8 @@ const defaults = {
   reverseIntelBinaryStrings: false,
   /** Herramientas locales (cero tokens): validador, secretos, .gitignore, snapshots */
   localTools: true,
+  /** Snapshot local automático antes de lotes del agente que cambian 2+ archivos */
+  autoSnapshotAgent: true,
   wordWrap: 'on',
   minimap: false,
   theme: 'vs-dark',

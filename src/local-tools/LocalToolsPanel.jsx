@@ -6,9 +6,6 @@ import { IndexTab, DocsTab, ScaffoldTab } from './DocsTabs.jsx'
 import { SnippetsTab, AiTab } from './SnippetsAiTabs.jsx'
 import { useOllama } from './useOllama.js'
 
-const SKIP = /(^|[\\/])(node_modules|\.git|dist|dist-electron|build|out|__pycache__)([\\/]|$)/
-const EXT = ['json', 'yml', 'yaml', 'js', 'mjs', 'cjs']
-
 function joinPath(dir, file) {
   const sep = dir.includes('\\') ? '\\' : '/'
   return dir.replace(/[\\/]+$/, '') + sep + file
@@ -19,11 +16,10 @@ function fmtTime(ts) {
   try { return new Date(ts).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) } catch { return '' }
 }
 
-export default function LocalToolsPanel({ rootDir, activeFilePath, onOpenFile, onClose, settings, onInsertText }) {
+export default function LocalToolsPanel({ rootDir, activeFilePath, onOpenFile, onClose, settings, onInsertText, problems = {} }) {
   const lt = window.api?.localTools
   const ai = useOllama(settings)
   const [tab, setTab] = useState('errors')
-  const [problems, setProblems] = useState({}) // ruta absoluta -> [{line,col,message}]
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -36,32 +32,7 @@ export default function LocalToolsPanel({ rootDir, activeFilePath, onOpenFile, o
   const [snaps, setSnaps] = useState([])
   const [snapLabel, setSnapLabel] = useState('')
 
-  useEffect(() => { setProblems({}); setSecrets(null); setGi(null); setSnaps([]); setMsg('') }, [rootDir])
-
-  // ── Validación al guardar: escucha el watcher que App ya inicia (también cubre parches del agente) ──
-  useEffect(() => {
-    if (!rootDir || !lt || !window.api?.onFileChanged) return
-    const timers = new Map()
-    const unsub = window.api.onFileChanged((m) => {
-      if (!m || !m.file || SKIP.test(m.file)) return
-      const ext = m.file.split('.').pop()?.toLowerCase()
-      if (!EXT.includes(ext)) return
-      const full = joinPath(m.dir || rootDir, m.file)
-      clearTimeout(timers.get(full))
-      timers.set(full, setTimeout(async () => {
-        timers.delete(full)
-        const r = await lt.validate(full).catch(() => null)
-        if (!r) return
-        setProblems(p => {
-          const n = { ...p }
-          if (r.ok || !r.errors?.length) delete n[full]
-          else n[full] = r.errors
-          return n
-        })
-      }, 500))
-    })
-    return () => { unsub?.(); timers.forEach(clearTimeout) }
-  }, [rootDir, lt])
+  useEffect(() => { setSecrets(null); setGi(null); setSnaps([]); setMsg('') }, [rootDir])
 
   const refreshGi = useCallback(async () => {
     if (!rootDir || !lt) return
@@ -85,7 +56,7 @@ export default function LocalToolsPanel({ rootDir, activeFilePath, onOpenFile, o
     return <div className="lt-panel"><span className="lt-muted">Abrí una carpeta de proyecto para usar las herramientas locales.</span></div>
   }
 
-  const problemFiles = Object.keys(problems)
+  const problemList = Object.values(problems) // [{ path, errors }]
 
   const runScan = async () => {
     setBusy(true); setMsg('')
@@ -129,7 +100,7 @@ export default function LocalToolsPanel({ rootDir, activeFilePath, onOpenFile, o
         <button className="sb-btn" style={{ fontSize: 8, padding: '1px 6px' }} onClick={onClose}>×</button>
       </div>
       <div className="lt-tabs">
-        <TabBtn id="errors">Errores{problemFiles.length > 0 && <span className="lt-badge">{problemFiles.length}</span>}</TabBtn>
+        <TabBtn id="errors">Errores{problemList.length > 0 && <span className="lt-badge">{problemList.length}</span>}</TabBtn>
         <TabBtn id="secrets">Secretos{secrets?.findings?.length > 0 && <span className="lt-badge">{secrets.findings.length}</span>}</TabBtn>
         <TabBtn id="gitignore">.gitignore</TabBtn>
         <TabBtn id="snaps">Rollbacks</TabBtn>
@@ -144,18 +115,18 @@ export default function LocalToolsPanel({ rootDir, activeFilePath, onOpenFile, o
 
       {tab === 'errors' && (
         <div>
-          <div className="lt-muted">Se valida al guardar: JSON, YAML (chequeo ligero) y JS/MJS/CJS. JSX/TS no se validan aquí.</div>
-          {problemFiles.length === 0
-            ? <div className="lt-ok" style={{ marginTop: 6 }}>✓ Sin errores detectados desde que abriste el panel</div>
+          <div className="lt-muted">Se valida al guardar y al abrir un archivo: JSON, YAML (chequeo ligero) y JS/MJS/CJS. En el editor, la línea con error se subraya en rojo. JSX/TS no se validan aquí.</div>
+          {problemList.length === 0
+            ? <div className="lt-ok" style={{ marginTop: 6 }}>✓ Sin errores detectados</div>
             : (
               <div className="lt-list">
-                {problemFiles.map(f => (
+                {problemList.map(({ path: f, errors }) => (
                   <div key={f} className="lt-item clickable" onClick={() => onOpenFile?.({ path: f, name: baseName(f) })} title="Abrir archivo">
                     <div className="lt-file">{baseName(f)}</div>
-                    {problems[f].slice(0, 5).map((e, i) => (
+                    {errors.slice(0, 5).map((e, i) => (
                       <div key={i} className="lt-err">L{e.line}:{e.col} — {e.message}</div>
                     ))}
-                    {problems[f].length > 5 && <div className="lt-muted">+{problems[f].length - 5} más</div>}
+                    {errors.length > 5 && <div className="lt-muted">+{errors.length - 5} más</div>}
                   </div>
                 ))}
               </div>
