@@ -17,6 +17,7 @@ const writer = require('./writer')
 const semver = require('./semver')
 const cleaner = require('./cleaner')
 const linkcheck = require('./linkcheck')
+const cssmin = require('./cssmin')
 
 function insideRoot(root, p) {
   const r = path.resolve(root)
@@ -106,6 +107,8 @@ function registerLocalTools(ipcMain, { app }) {
   ipcMain.handle('lt-clean-scan',      wrap(({ root, cats }) => cleaner.scanProject(needRoot(root), Array.isArray(cats) ? cats : [])))
   ipcMain.handle('lt-clean-apply',     wrap(({ root, cats }) => cleaner.applyClean(needRoot(root), Array.isArray(cats) ? cats : [])))
   ipcMain.handle('lt-links-scan',      wrap(({ root }) => linkcheck.scanLinks(needRoot(root))))
+  ipcMain.handle('lt-css-scan',        wrap(({ root }) => cssmin.scanCss(needRoot(root))))
+  ipcMain.handle('lt-css-apply',       wrap(({ root }) => cssmin.applyCss(needRoot(root))))
 
   ipcMain.handle('lt-ollama-status',   wrap((a) => writer.status(a)))
   ipcMain.handle('lt-writer-commit',   wrap(({ root, url, model }) => writer.commitMessage({ root: needRoot(root), url, model })))

@@ -123,6 +123,8 @@ contextBridge.exposeInMainWorld('api', {
     cleanScan:       (root, cats)   => ipcRenderer.invoke('lt-clean-scan', { root, cats }),
     cleanApply:      (root, cats)   => ipcRenderer.invoke('lt-clean-apply', { root, cats }),
     linksScan:       (root)         => ipcRenderer.invoke('lt-links-scan', { root }),
+    cssScan:         (root)         => ipcRenderer.invoke('lt-css-scan', { root }),
+    cssApply:        (root)         => ipcRenderer.invoke('lt-css-apply', { root }),
   },
 
   settingsLoad: () => ipcRenderer.invoke('settings-load'),

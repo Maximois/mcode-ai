@@ -197,12 +197,78 @@ function LinksSection({ rootDir, onOpenFile }) {
   )
 }
 
+// ── Optimizar CSS (genera .min.css, no toca los originales) ──────────────────
+const CSS_STATUS = {
+  ok: { label: 'listo', cls: 'lt-ok' },
+  nosavings: { label: 'sin ahorro', cls: 'lt-muted' },
+  exists: { label: 'ya existe .min.css ajeno', cls: 'lt-muted' },
+  skip: { label: 'omitido', cls: 'lt-muted' },
+  error: { label: 'no seguro', cls: 'lt-err' },
+}
+
+function CssSection({ rootDir, onOpenFile }) {
+  const lt = window.api.localTools
+  const [res, setRes] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  useEffect(() => { setRes(null); setNote('') }, [rootDir])
+
+  const run = async (keepNote = false) => {
+    setBusy(true)
+    if (!keepNote) setNote('')
+    setRes(await lt.cssScan(rootDir).catch(e => ({ ok: false, error: e.message })))
+    setBusy(false)
+  }
+
+  const apply = async () => {
+    if (!window.confirm(`Se crearán ${res.eligible} archivos .min.css junto a los originales (ahorro: ${fmtBytes(res.savedBytes)}).\n\nTus .css originales NO se modifican.`)) return
+    setBusy(true)
+    const r = await lt.cssApply(rootDir).catch(e => ({ ok: false, error: e.message }))
+    setNote(r.ok ? `Generados ${r.written} archivos .min.css (ahorro: ${fmtBytes(r.saved)})${r.failedCount ? ` · ${r.failedCount} fallaron` : ''}` : r.error)
+    setBusy(false)
+    if (r.ok) await run(true)
+  }
+
+  return (
+    <div>
+      <div className="lt-section">Optimizar CSS</div>
+      <div className="lt-muted">Crea una copia minificada (.min.css) de cada .css. No modifica los originales ni pisa .min.css de librerías. Cada resultado se verifica antes de escribirse.</div>
+      <div className="lt-row">
+        <button className="sb-btn" onClick={() => run()} disabled={busy}>{busy ? 'Revisando…' : 'Buscar CSS'}</button>
+        <button className="sb-btn" onClick={apply} disabled={busy || !res?.eligible}>Generar .min.css ({res?.eligible || 0})</button>
+      </div>
+      {res && !res.ok && <div className="lt-err">{res.error}</div>}
+      {res?.ok && (res.files.length === 0
+        ? <div className="lt-muted">No hay archivos .css en el proyecto.</div>
+        : (
+          <>
+            <div className="lt-muted">{res.files.length} archivos CSS · ahorro posible: {fmtBytes(res.savedBytes)}{res.truncated ? ' · lista parcial' : ''}</div>
+            <div className="lt-list">
+              {res.files.map(f => {
+                const st = CSS_STATUS[f.status] || CSS_STATUS.skip
+                return (
+                  <div key={f.rel} className="lt-item clickable" onClick={() => onOpenFile?.({ path: joinPath(rootDir, f.rel), name: baseName(f.rel) })} title={f.reason || ''}>
+                    <div className="lt-file">{f.rel}</div>
+                    <div><span className={st.cls}>{st.label}</span> <span className="lt-muted">{f.status === 'ok' ? `${fmtBytes(f.before)} → ${fmtBytes(f.after)}` : (f.reason || '')}</span></div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        ))}
+      {note && <div className="lt-muted">{note}</div>}
+    </div>
+  )
+}
+
 export default function MaintenanceTab({ rootDir, onOpenFile }) {
   return (
     <div>
       <VersionSection rootDir={rootDir} />
       <CleanSection rootDir={rootDir} />
       <LinksSection rootDir={rootDir} onOpenFile={onOpenFile} />
+      <CssSection rootDir={rootDir} onOpenFile={onOpenFile} />
     </div>
   )
 }
