@@ -41,6 +41,15 @@ console.log('[1b] Parser de herramientas (src/ai.js)')
   else console.log((r.stdout || '').trimEnd())
 }
 
+// 1c) Pruebas de las herramientas locales (electron/local-tools): seguridad de borrados, snapshots,
+//     escritura en masa, versionado y validacion de parametros. Son rapidas (~2 s) y no usan red.
+console.log('[1c] Herramientas locales (electron/local-tools)')
+{
+  const r = spawnSync(process.execPath, ['--no-warnings', join(root, 'scripts', 'test-local-tools.mjs')], { encoding: 'utf8' })
+  if (r.status !== 0) { failed++; console.error((r.stderr || r.stdout || '').trim().split('\n').slice(-20).join('\n')) }
+  else console.log((r.stdout || '').trimEnd())
+}
+
 // 2) Build real del renderer (detecta errores de JSX, imports rotos, etc.)
 if (quick) {
   console.log('[2/2] Build de vite: omitido (--quick)')

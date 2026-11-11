@@ -5,6 +5,19 @@ Todos los cambios notables a este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/),
 y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### ✨ Added
+- Herramientas locales de cero tokens (botón 🛠 Local del explorador; se desactivan con `localTools: false`). Capa aislada en `electron/local-tools/` y `src/local-tools/` que no reemplaza nada del editor:
+  - Validación al guardar y al abrir (JSON, YAML, JS/MJS/CJS) con la línea con error subrayada en el editor
+  - Escáner de secretos (valores enmascarados) y gestor visual de `.gitignore`
+  - Rollbacks: snapshots comprimidos fuera del proyecto, con respaldo previo al restaurar y snapshot automático antes de que el agente cambie 2+ archivos (opcional en Ajustes)
+  - Índice de símbolos, generador de README, JSDoc y encabezados de licencia (con vista previa y snapshot previo), y scaffolding desde plantillas JSON
+  - Biblioteca de 16 snippets validados con parámetros saneados
+  - Mantenimiento: versionado SemVer, changelog desde git, limpieza de basura regenerable, enlaces rotos y minificado de CSS (`.min.css`, sin tocar los originales)
+- Redactor local opcional con Ollama (solo `localhost`): propone mensajes de commit, introducciones de README y descripciones JSDoc, y adapta snippets; todo se revisa antes de usarse
+- `scripts/test-local-tools.mjs` (79 comprobaciones, se corre desde `npm run verify`) con foco en la seguridad de borrados, snapshots y escritura en masa
+
 ## [2.0.0] - 2024-10-09
 
 ### ✨ Added
