@@ -8,6 +8,7 @@ import {
 } from './ai.js'
 import { useSettings } from './hooks/useSettings.js'
 import { contextWindowFor, promptBudgetFor, findUnreadTargets, normRel } from './agentContext.js'
+import { pickChecks, evaluateCheck, formatReport, errorForAI } from './autopilot.js'
 import { useTabs, getLang } from './hooks/useTabs.js'
 import { useMemory } from './hooks/useMemory.js'
 import BrowserTab from './BrowserTab.jsx'
@@ -675,7 +676,7 @@ const ChatMsg = memo(function ChatMsg({ msg, onApply, onApplyAll }) {
 
 // ─── Plans Panel (inline in chat) ────────────────────────────────────────────
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab, rootDir, projectFiles, projectIndex, memories, getRelevantMemories, remember, onApplyAction, onApplyAll, chosenModel, setChosenModel, sendRef, devLogs = [], collectWebPageIntel }) {
+function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab, rootDir, projectFiles, projectIndex, memories, getRelevantMemories, remember, onApplyAction, onApplyAll, chosenModel, setChosenModel, sendRef, devLogs = [], collectWebPageIntel, reportSinkRef }) {
   const msgIdCounter = useRef(0)
   const nextMsgId = () => ++msgIdCounter.current
   const [msgs, setMsgs]       = useState([{ role:'assistant', content:'Hola! Soy **MCodeAI Pre**. Abrí un proyecto o archivo y preguntame lo que necesités.', _id: 'welcome' }])
@@ -706,6 +707,12 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
   }, [msgs, rootDir])
 
   const readSeenRef = useRef(new Set())   // archivos que el agente leyó realmente en este turno
+  // Tarjetas del autopiloto (resultado de las verificaciones): se muestran en el chat pero NO viajan en el historial a la IA
+  useEffect(() => {
+    if (!reportSinkRef) return
+    reportSinkRef.current = (text) => { if (text) setMsgs(p => [...p, { role:'assistant', type:'report', content: text, _id: nextMsgId() }]) }
+    return () => { reportSinkRef.current = null }
+  }, [reportSinkRef])
   const [input, setInput]     = useState('')
   const [image, setImage]     = useState(null)   // { base64, name, preview }
   const [busy, setBusy]       = useState(false)
@@ -892,7 +899,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
       const mems = getRelevantMemories(rootDir, activeTab?.filePath)
       // Strip extra fields (provider, model) — Mistral/Together reject them with 422
       const cleanHistory = history
-        .filter(m => m.type !== 'agent_log')
+        .filter(m => m.type !== 'agent_log' && m.type !== 'report')
         .map(m => ({ role: m.role, content: m.content || '' }))
       const relevantFiles = relevResult || localRelevantFiles || projectIndex
 
@@ -1582,6 +1589,11 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
                 <option value="128000">128K</option>
               </select>
               <span>Ventana de contexto: el chat se compacta solo cuando no entra</span>
+            </label>
+            <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+              <input type="checkbox" checked={settings.autopilotChecks !== false}
+                onChange={e => updateSettings({ autopilotChecks: e.target.checked })} />
+              <span>Autopiloto: verificar solo tras aplicar cambios (corre "verify" o, si no hay, "test" y "lint" del package.json)</span>
             </label>
             <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
               <input type="checkbox" checked={!!settings.autoApplyAiRun}
@@ -2579,6 +2591,45 @@ function App() {
     }
   }, [rootDir, tabs, updateContent, markCodeChanged])
 
+  // ── Autopiloto fase 1: cadena de verificación tras aplicar cambios de código ──
+  // package.json decide qué correr: "verify" (si existe) o, si no, "test" y "lint". Una cosa a la vez (poca RAM);
+  // se frena en el primer fallo. Devuelve un resumen CORTO del fallo para la IA ('' si todo pasó o no corresponde).
+  const reportSinkRef = useRef(null)   // lo completa ChatPanel: agrega la tarjeta de resultado al chat
+  const runAutopilotChecks = useCallback(async (actions) => {
+    if (!rootDir || !window.api || settings.autopilotChecks === false) return ''
+    const touchedCode = (actions || []).some(a => a.type !== 'RUN' && a.type !== 'READ' && /\.(jsx?|tsx?|mjs|cjs|py)$/i.test(a.filePath || ''))
+    if (!touchedCode) return ''
+    try {
+      const root = rootDir.replace(/\\/g, '/').replace(/\/$/, '')
+      const pk = await window.api.readFile(root + '/package.json')
+      const scripts = pk.ok ? (JSON.parse(pk.content || '{}')?.scripts || {}) : {}
+      const checks = pickChecks(scripts)
+      if (!checks.length) return ''
+      setShowTerminal(true)
+      const stamp = () => new Date().toLocaleTimeString()
+      const results = [], skipped = []
+      for (let i = 0; i < checks.length; i++) {
+        const c = checks[i]
+        setTermLines(p => [...p, { type: 'info', text: `${stamp()} 🔍 Verificando: ${c.command}…` }])
+        const t0 = Date.now()
+        const r = await window.api.runCommand({ command: c.command, cwd: rootDir, timeoutMs: 180000 })
+        const ev = evaluateCheck({ ...c, code: r.code, out: r.out, err: r.err, ms: Date.now() - t0, timedOut: r.timedOut })
+        results.push(ev)
+        if (ev.ok) setTermLines(p => [...p, { type: 'out', text: `${stamp()} ✔ ${c.command}` }])
+        else {
+          setTermLines(p => [...p, { type: 'err', text: `${stamp()} ✗ ${c.command} falló:\n${ev.summary.join('\n')}` }])
+          skipped.push(...checks.slice(i + 1).map(x => x.command))
+          break
+        }
+      }
+      reportSinkRef.current?.(formatReport(results, skipped))
+      return errorForAI(results)
+    } catch (e) {
+      console.warn('[AUTOPILOT]', e)
+      return ''
+    }
+  }, [rootDir, settings.autopilotChecks])
+
   // Apply user/assistant actions directly without extra file preview
   const applyAction = useCallback(async (action) => {
     if (!window.api) return
@@ -2588,9 +2639,10 @@ function App() {
       return
     }
 
-    await confirmAction(action)
+    const err = await confirmAction(action)
+    if (!err) await runAutopilotChecks([action])   // en modo Manual también se verifica tras cada Aplicar
     return
-  }, [confirmAction])
+  }, [confirmAction, runAutopilotChecks])
 
   const applyAll = useCallback(async (actions, opts = {}) => {
     const errors = []
@@ -2611,34 +2663,15 @@ function App() {
       const err = await confirmAction(a)
       if (err) errors.push(err)
     }
-    // Verificación del proyecto: solo si el proyecto define el script "verify" en package.json
-    // (no se lanzan builds pesados por sorpresa). Una vez por lote, no por archivo.
-    const touchedCode = actions.some(a => a.type !== 'RUN' && a.type !== 'READ' && /\.(jsx?|tsx?|mjs|cjs)$/i.test(a.filePath || ''))
-    if (errors.length === 0 && touchedCode && rootDir && window.api) {
-      try {
-        const root = rootDir.replace(/\\/g, '/').replace(/\/$/, '')
-        const pk = await window.api.readFile(root + '/package.json')
-        const hasVerify = pk.ok && !!JSON.parse(pk.content || '{}')?.scripts?.verify
-        if (hasVerify) {
-          setShowTerminal(true)
-          setTermLines(p => [...p, { type: 'info', text: `${new Date().toLocaleTimeString()} 🔍 Verificando el proyecto (npm run verify)…` }])
-          const r = await window.api.runCommand({ command: 'npm run verify', cwd: rootDir })
-          const text = `${r.err || ''}\n${r.out || ''}`.trim()
-          if (r.code === 0 || r.ok) {
-            setTermLines(p => [...p, { type: 'out', text: `${new Date().toLocaleTimeString()} ✔ Proyecto verificado` }])
-          } else {
-            setTermLines(p => [...p, { type: 'err', text: `${new Date().toLocaleTimeString()} ✗ npm run verify falló:\n${text.slice(-1500)}` }])
-            errors.push(`npm run verify falló tras tus cambios:\n${text.slice(-1800) || '(sin salida; posible tiempo agotado)'}`)
-          }
-        }
-      } catch (e) {
-        console.warn('[VERIFY-PROJECT]', e)
-      }
+    // Verificación del proyecto (autopiloto): una vez por lote, solo si no hubo errores de sintaxis por archivo.
+    if (errors.length === 0) {
+      const failMsg = await runAutopilotChecks(actions)
+      if (failMsg) errors.push(failMsg)
     }
     const errText = errors.length > 0 ? errors.join('\n\n') : ''
     if (errText) opts.onError?.(errText)
     return { ok: errors.length === 0, errors, applied: actions.length - errors.length }
-  }, [confirmAction, rootDir, settings.localTools, settings.autoSnapshotAgent])
+  }, [confirmAction, rootDir, settings.localTools, settings.autoSnapshotAgent, runAutopilotChecks])
 
   // Terminal run command
   const runCmd = async (cmd) => {
@@ -3262,6 +3295,7 @@ function App() {
             getRelevantMemories={getRelevantMemories}
             remember={remember}
             onApplyAction={applyAction}
+            reportSinkRef={reportSinkRef}
             onApplyAll={applyAll}
             chosenModel={chosenModel}
             setChosenModel={setChosenModel}

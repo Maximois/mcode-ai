@@ -7,6 +7,12 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### 🤖 Autopiloto (fase 1): verificación automática tras aplicar cambios
+- Tras aplicar un cambio de código (por lote o con el botón Aplicar suelto, también en modo Manual) corre las verificaciones del proyecto: `verify` si existe o, si no, `test` y `lint` de `package.json`. Una a la vez, se frena en el primer fallo, con 3 min de tope
+- Tarjeta de resultado en el chat (✔/✗ con tiempos y la ubicación del fallo); a la IA solo le llega un resumen corto del fallo, no el log completo
+- Opción en Ajustes para apagarlo; `run-command` acepta `timeoutMs` opcional y avisa `timedOut`
+- `scripts/test-autopilot.mjs` (27 comprobaciones, enganchado a `npm run verify`)
+
 ### 🛡 Agente: contexto fiable y freno de mano
 - Modo de parches **Manual por defecto** (botón ✋ Manual / ⚡ Auto en el chat y opción en Ajustes): los PATCH/WRITE/CREATE y los RUN esperan tu clic en Aplicar. En Auto, un parche sobre un archivo que el agente no leyó en ese turno se rechaza y se le pide leerlo primero (en Manual solo se avisa)
 - Índice del proyecto siempre presente y honesto: avisa cuando es parcial (tope de archivos/tamaño/profundidad), lista los archivos que quedaron sin contenido y pasa a formato compacto si no entra en el presupuesto

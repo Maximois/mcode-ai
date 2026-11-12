@@ -38,6 +38,8 @@ const defaults = {
   helperApis: false,
   /** Freno de mano: 'manual' (por defecto) = los PATCH/WRITE/CREATE esperan tu clic en Aplicar; 'auto' = se aplican solos */
   patchApplyMode: 'manual',
+  /** Autopiloto fase 1: verificaciones automáticas (verify o test+lint de package.json) tras aplicar cambios de código */
+  autopilotChecks: true,
   /** Ventana de contexto en tokens (0 = automática según el modelo). El historial se compacta para que quepa */
   contextTokens: 0,
   /** Ejecutar bloques RUN automáticamente (riesgo: comandos arbitrarios) */

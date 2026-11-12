@@ -842,10 +842,12 @@ ipcMain.handle('run-code', async (_, { code, language, filename, cwd }) => {
 })
 
 // ── Shell command ──────────────────────────────────────────────────────────────
-ipcMain.handle('run-command', async (_, { command, cwd }) => {
+ipcMain.handle('run-command', async (_, { command, cwd, timeoutMs }) => {
   return new Promise(resolve => {
     try {
-      const proc = spawnShell(command, { cwd: cwd || os.homedir(), timeout: 60000 })
+      // timeoutMs opcional (máx. 10 min); por defecto 60 s como siempre
+      const tmo = Math.min(Math.max(Number(timeoutMs) || 60000, 1000), 600000)
+      const proc = spawnShell(command, { cwd: cwd || os.homedir(), timeout: tmo })
       let out = '', err = ''
       
       if (!proc.stdout || !proc.stderr) {
@@ -860,8 +862,8 @@ ipcMain.handle('run-command', async (_, { command, cwd }) => {
         err += d
         sendToMain('cmd-stream', { type: 'err', text: d.toString() }) 
       })
-      proc.on('close', code => {
-        resolve({ ok: code === 0, out: out || '', err: err || '', code })
+      proc.on('close', (code, signal) => {
+        resolve({ ok: code === 0, out: out || '', err: err || '', code, timedOut: code === null && !!signal })
       })
       proc.on('error', e => {
         const message = e.message || 'Unknown error'

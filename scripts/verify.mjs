@@ -58,6 +58,14 @@ console.log('[1d] Contexto del agente (presupuesto, compactacion, guardia de lec
   else console.log((r.stdout || '').trimEnd())
 }
 
+// 1e) Autopiloto fase 1 (src/autopilot.js): que verificaciones correr tras aplicar cambios y como se resumen los fallos
+console.log('[1e] Autopiloto (cadena de verificacion y resumen de fallos)')
+{
+  const r = spawnSync(process.execPath, ['--no-warnings', join(root, 'scripts', 'test-autopilot.mjs')], { encoding: 'utf8' })
+  if (r.status !== 0) { failed++; console.error((r.stderr || r.stdout || '').trim().split('\n').slice(-20).join('\n')) }
+  else console.log((r.stdout || '').trimEnd())
+}
+
 // 2) Build real del renderer (detecta errores de JSX, imports rotos, etc.)
 if (quick) {
   console.log('[2/2] Build de vite: omitido (--quick)')
