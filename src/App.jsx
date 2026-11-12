@@ -3,6 +3,7 @@ import React, {
 } from 'react'
 import {
   routeProvider, sendToAI, buildMessages, searchWeb, parseActions, stripActions,
+  extractWindowsPaths, normalizeProjectPath, findUnverifiedFileActions,
   analyzeProjectRelevance, selectRelevantFiles, helperApisEnabled, PROVIDERS, fetchZenModels, estimateTokens,
   imageToBase64, modelSupportsVision, describeImage, pushUndo, undoHistory, addExperience, searchExperience, getExperienceStats, getTimeline,
 } from './ai.js'
@@ -656,12 +657,12 @@ const ChatMsg = memo(function ChatMsg({ msg, onApply, onApplyAll }) {
         {actions.length > 0 && !isAutoApplied && (
           <div className="msg-actions">
             {actions.length > 1 && (
-              <button className="action-btn action-all" onClick={() => onApplyAll(actions)}>
+              <button className="action-btn action-all" onClick={() => onApplyAll(actions, msg)}>
                 ✦ Aplicar todo ({actions.length})
               </button>
             )}
             {actions.map((a, i) => (
-              <button key={`action-${msg._id}-${i}-${a.type}-${a.filePath}`} className="action-btn" onClick={() => onApply(a)}>
+              <button key={`action-${msg._id}-${i}-${a.type}-${a.filePath}`} className="action-btn" onClick={() => onApply(a, msg)}>
                 {a.type === 'RUN' ? '▶ Ejecutar' : a.type === 'READ' ? `📖 ${a.filePath}` : `✦ ${a.type} ${a.filePath?.split('/').pop() || ''}`}
               </button>
             ))}
@@ -720,9 +721,16 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
 
   const autoFixCount = useRef(0)
   const pendingRef = useRef('')
-  const handleApplyAll = async (actions) => {
+  const actionEvidence = (sourceMsg) => ({
+    rootDir: sourceMsg && Object.prototype.hasOwnProperty.call(sourceMsg, 'actionRootDir')
+      ? sourceMsg.actionRootDir
+      : rootDir,
+    verifiedReadPaths: sourceMsg?.verifiedReadPaths || [],
+  })
+  const handleApplyAll = async (actions, sourceMsg) => {
     try {
-      await onApplyAll(actions, {
+      const result = await onApplyAll(actions, {
+        ...actionEvidence(sourceMsg),
         onError: (errors) => {
           const errMsg = errors.slice(0, 2000)
           setMsgs(p => [...p, { role:'assistant', content:'⚠️ Error de verificación al aplicar cambios:\n```\n' + errMsg + '\n```', _id: nextMsgId() }])
@@ -731,8 +739,17 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
           queueMicrotask(() => send(`La verificación de sintaxis encontró estos errores al aplicar los cambios anteriores:\n\`\`\`\n${errMsg}\n\`\`\`\nCorregilos. Si persisten, segui intentando hasta que compile sin errores.`, { auto: true }))
         }
       })
+      if (result?.blocked) {
+        setMsgs(p => [...p, { role: 'assistant', content: `⚠️ No se aplicaron los cambios:\n${result.errors.join('\n')}`, _id: nextMsgId() }])
+      }
     } catch (e) {
       console.warn('Auto-fix error:', e)
+    }
+  }
+  const handleApplyAction = async (action, sourceMsg) => {
+    const result = await onApplyAction(action, actionEvidence(sourceMsg))
+    if (result?.error) {
+      setMsgs(p => [...p, { role: 'assistant', content: `⚠️ ${result.error}`, _id: nextMsgId() }])
     }
   }
 
@@ -808,24 +825,72 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
     const agentModeEffective = !settings.pipeline && settings.agentMode !== false
 
     try {
+      pendingRef.current = ''
       // Parallel: route + relevance
       const freshFiles = rootDir && window.api ? await window.api.projectContext(rootDir).catch(() => null) : projectFiles
       const lastQ = text.trim()
+      let requestRootDir = rootDir
+      let requestFiles = freshFiles
+      let requestActiveFile = activeTab?.filePath || activeTab?.name
+      let requestActiveContent = activeTab?.content
+      let explicitPathContext = ''
+      const explicitPath = extractWindowsPaths(lastQ)[0]
+      if (explicitPath) {
+        const clearUnverifiedTarget = () => {
+          requestRootDir = null
+          requestFiles = null
+          requestActiveFile = null
+          requestActiveContent = ''
+        }
+        try {
+          if (!window.api?.statPath) {
+            explicitPathContext = `No pude comprobar la ruta explícita "${explicitPath}": la API de inspección de rutas no está disponible. No afirmes que inspeccionaste ese proyecto.`
+            clearUnverifiedTarget()
+          } else {
+            const stat = await window.api.statPath(explicitPath)
+            if (!stat?.ok) {
+              explicitPathContext = `La ruta explícita "${explicitPath}" no existe o no se pudo inspeccionar (${stat?.error || 'error desconocido'}). No inventes su estructura ni afirmes haberla leído.`
+              clearUnverifiedTarget()
+            } else if (stat.isDirectory) {
+              requestRootDir = explicitPath
+              requestFiles = await window.api.projectContext(explicitPath)
+              requestActiveFile = null
+              requestActiveContent = ''
+              explicitPathContext = `Ruta de proyecto explícita comprobada: "${explicitPath}". Se cargó el contexto del proyecto (${Object.keys(requestFiles || {}).length} archivos indexados). El índice no sustituye leer los archivos relevantes completos.`
+            } else if (stat.isFile) {
+              const file = await window.api.readFile(explicitPath)
+              if (!file?.ok) throw new Error(file?.error || 'no se pudo leer el archivo')
+              const normalized = explicitPath.replace(/\//g, '\\')
+              const slash = normalized.lastIndexOf('\\')
+              requestRootDir = slash > 2 ? normalized.slice(0, slash) : normalized.slice(0, 3)
+              requestFiles = await window.api.projectContext(requestRootDir)
+              const relative = normalized.slice(requestRootDir.length).replace(/^\\/, '')
+              requestFiles = { ...(requestFiles || {}), [relative]: file.content }
+              requestActiveFile = explicitPath
+              requestActiveContent = file.content
+              explicitPathContext = `Archivo explícito comprobado y leído: "${explicitPath}". El proyecto contenedor es "${requestRootDir}".`
+            }
+          }
+        } catch (e) {
+          explicitPathContext = `No pude cargar la ruta explícita "${explicitPath}": ${e.message}. No inventes su contenido ni su estructura.`
+          clearUnverifiedTarget()
+        }
+      }
       const needsRoute  = prov === 'auto'
       // Con un solo modelo elegido NO se consulta OpenRouter por su cuenta (salvo "APIs auxiliares" activadas)
-      const needsRelev  = !!(helperApisEnabled(settings) && freshFiles && settings.apiKeys?.openrouter && Object.keys(freshFiles || {}).length > 3)
+      const needsRelev  = !!(helperApisEnabled(settings) && requestFiles && settings.apiKeys?.openrouter && Object.keys(requestFiles || {}).length > 3)
 
-      const localRelevantFiles = freshFiles
-        ? selectRelevantFiles(freshFiles, lastQ, activeTab?.filePath || activeTab?.name, 5)
+      const localRelevantFiles = requestFiles
+        ? selectRelevantFiles(requestFiles, lastQ, requestActiveFile, 5)
         : null
 
-      const localProjectSearch = freshFiles
-        ? searchProjectFiles(freshFiles, lastQ, 5, 3)
+      const localProjectSearch = requestFiles
+        ? searchProjectFiles(requestFiles, lastQ, 5, 3)
         : null
 
       const [routeResult, relevResult] = await Promise.all([
-        needsRoute ? routeProvider(settings, freshFiles, lastQ, activeTab?.filePath || activeTab?.name, ab.signal).catch(() => null) : null,
-        needsRelev ? analyzeProjectRelevance({ projectFiles: freshFiles, userQuestion: lastQ, openrouterApiKey: settings.apiKeys.openrouter, signal: ab.signal }).catch(() => null) : null,
+        needsRoute ? routeProvider(settings, requestFiles, lastQ, requestActiveFile, ab.signal).catch(() => null) : null,
+        needsRelev ? analyzeProjectRelevance({ projectFiles: requestFiles, userQuestion: lastQ, openrouterApiKey: settings.apiKeys.openrouter, signal: ab.signal }).catch(() => null) : null,
       ])
 
       let activeProv = prov, activeModel = model, activeKey = apiKey
@@ -854,16 +919,16 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
       setImage(null)
 
       const history = trimHistoryAfterMarker(rawHistory)
-      const ctx = activeTab
-        ? (activeTab.filePath ? `[Archivo activo: ${activeTab.name}]\n` : '') + (activeTab.content || '')
+      const ctx = requestActiveContent
+        ? (requestActiveFile ? `[Archivo activo: ${requestActiveFile}]\n` : '') + requestActiveContent
         : ''
 
-      const mems = getRelevantMemories(rootDir, activeTab?.filePath)
+      const mems = getRelevantMemories(requestRootDir, requestActiveFile)
       // Strip extra fields (provider, model) — Mistral/Together reject them with 422
       const cleanHistory = history
         .filter(m => m.type !== 'agent_log')
         .map(m => ({ role: m.role, content: m.content || '' }))
-      const relevantFiles = relevResult || localRelevantFiles || projectIndex
+      const relevantFiles = relevResult || localRelevantFiles || (requestRootDir && requestRootDir === rootDir ? projectIndex : [])
 
       let webSearchResults = null
       if (shouldUseWebSearch(lastQ)) {
@@ -887,9 +952,9 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
       }
 
       const baseMessages = buildMessages({
-        projectFiles:         freshFiles,
-        activeFile:           activeTab?.filePath || activeTab?.name,
-        activeContent:        activeTab?.content,
+        projectFiles:         requestFiles,
+        activeFile:           requestActiveFile,
+        activeContent:        requestActiveContent,
         memories:             mems,
         history:              cleanHistory,
         relevantFiles,
@@ -900,10 +965,15 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
         tokenBudget:          25000,
         agentMode:            agentModeEffective,
       })
+      if (explicitPathContext) baseMessages.unshift({ role: 'system', content: `[Verificación de ruta explícita]\n${explicitPathContext}` })
 
       // Stream response
       let aiMsg = { role:'assistant', content:'', provider: activeProv, model: activeModel, _id: nextMsgId() }
       setMsgs(p => [...p, aiMsg])
+      const verifiedReadPaths = new Set()
+      if (requestActiveFile && requestActiveContent) {
+        verifiedReadPaths.add(normalizeProjectPath(requestActiveFile, requestRootDir))
+      }
 
       const bufferFallbacks = routeCandidates.length > 1
       let lastError = null
@@ -960,13 +1030,14 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
             imageBase64: routeImageBase64,
             activeFile: activeTab?.filePath || activeTab?.name,
             activeContent: activeTab?.content,
-            projectFiles: freshFiles,
+            projectFiles: requestFiles,
             relevantFiles,
-            rootDir,
+            rootDir: requestRootDir,
             onChunk: onChunkCallback,
             agentMode: agentModeEffective,
             onStatus: ({ text: st }) => { if (st) setWorkText(st) },
-            onToolProgress: ({ phase, name, detail, ok }) => {
+            onToolProgress: ({ phase, name, detail, ok, readFiles }) => {
+              for (const filePath of readFiles || []) verifiedReadPaths.add(normalizeProjectPath(filePath, requestRootDir))
               const nm = name || '?', dt = detail || ''
               if (phase === 'start') {
                 const row = { id: `${Date.now()}-${agentTraceRef.current.length}`, name: nm, detail: dt, status: 'run', t0: Date.now() }
@@ -989,9 +1060,16 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
 
           // Flush final content after streaming ends
           rafPending = false
+          aiMsg = {
+            ...aiMsg,
+            actionRootDir: requestRootDir,
+            verifiedReadPaths: [...verifiedReadPaths],
+          }
           if (pendingRef.current) {
             aiMsg = { ...aiMsg, content: pendingRef.current }
             setMsgs(p => [...p.slice(0, -1), aiMsg])
+          } else {
+            setMsgs(p => p.map(m => m._id === aiMsg._id ? aiMsg : m))
           }
 
           const persistedSteps = agentTraceRef.current.map(({ id, name, detail, status, ms }) => ({ id, name, detail, status: status === 'run' ? 'ok' : status, ms }))
@@ -1020,9 +1098,6 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
           if (finalAssistantContent.trim() && window.api) {
             const allActs = parseActions(finalAssistantContent)
             console.log(`[AI-RESPONSE] Acciones parseadas: ${allActs.length}`, allActs.map(a => ({ type: a.type, path: a.filePath })))
-            if (allActs.length > 0 && !rootDir) {
-              setMsgs(p => [...p, { role:'assistant', content:'ℹ️ La respuesta incluye parches (`\`\`\`PATCH/WRITE/CREATE\`\`\``). Aplicando directamente...', _id: nextMsgId() }])
-            }
             if (allActs.length === 0) {
               lastError = null
               break
@@ -1052,9 +1127,11 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
               })
             }
 
-            if (settings.autoApplyAiPatches !== false && fileActs.length > 0 && window.api) {
+            if (settings.autoApplyAiPatches !== false && fileActs.length > 0 && window.api && requestRootDir) {
               console.log(`[AUTO-APPLY] Intentando aplicar ${fileActs.length} acciones: ${fileActs.map(a => a.type).join(', ')}`)
               const r = await onApplyAll(fileActs, {
+                rootDir: requestRootDir,
+                verifiedReadPaths: [...verifiedReadPaths],
                 onError: (errMsg) => {
                   console.error('[AUTO-APPLY] Error:', errMsg)
                   setMsgs(p => [...p, { role:'assistant', content:'⚠️ Auto-aplicar: error de verificación:\n```\n' + errMsg.slice(0, 2000) + '\n```', _id: nextMsgId() }])
@@ -1068,15 +1145,21 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
               if (r?.ok) {
                 console.log(`[AUTO-APPLY] Éxito! Archivos: ${fileActs.map(a => a.filePath).join(', ')}`)
                 appendAutoNote(fileActs.map(a => a.filePath).filter(Boolean))
+              } else if (r?.blocked) {
+                setMsgs(p => [...p, { role: 'assistant', content: `⚠️ No se aplicaron los cambios automáticamente:\n${r.errors.join('\n')}`, _id: nextMsgId() }])
               } else {
                 console.warn(`[AUTO-APPLY] Falló. Errores: ${r?.errors?.length || 'desconocido'}`)
               }
+            } else if (fileActs.length > 0 && !requestRootDir) {
+              setMsgs(p => [...p, { role: 'assistant', content: '⚠️ No se aplicaron los cambios: no hay una carpeta de proyecto verificada para esta solicitud.', _id: nextMsgId() }])
             } else if (fileActs.length > 0) {
               console.log(`[AUTO-APPLY] Omitido - autoApplyAiPatches: ${settings.autoApplyAiPatches}, window.api: ${!!window.api}`)
             }
 
             if (settings.autoApplyAiRun && runActs.length > 0) {
               await onApplyAll(runActs, {
+                rootDir: requestRootDir,
+                verifiedReadPaths: [...verifiedReadPaths],
                 onError: (errMsg) => {
                   setMsgs(p => [...p, { role:'assistant', content:'⚠️ Auto-ejecutar RUN:\n```\n' + errMsg.slice(0, 1500) + '\n```', _id: nextMsgId() }])
                 },
@@ -1094,7 +1177,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
         }
       }
 
-      remember(rootDir, text, pendingRef.current || aiMsg.content, activeTab?.filePath)
+      remember(requestRootDir, text, pendingRef.current || aiMsg.content, requestActiveFile)
     } catch (e) {
       if (e.name !== 'AbortError') {
         setMsgs(p => [...p, { role:'assistant', content:'❌ ' + e.message, _id: nextMsgId() }])
@@ -1256,7 +1339,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
           }
           return false
         }).map((m, i) => (
-          <ChatMsg key={`${m._id != null && m._id !== '' ? `id-${m._id}` : 'noid'}-${i}`} msg={m} onApply={onApplyAction} onApplyAll={handleApplyAll} />
+          <ChatMsg key={`${m._id != null && m._id !== '' ? `id-${m._id}` : 'noid'}-${i}`} msg={m} onApply={handleApplyAction} onApplyAll={handleApplyAll} />
         ))}
         {busy && (
           <div className="msg msg-ai work-msg">
@@ -2317,7 +2400,7 @@ function App() {
   }
 
   // Confirm and execute a pending action
-  const confirmAction = useCallback(async (action) => {
+  const confirmAction = useCallback(async (action, targetRootDir = rootDir) => {
     if (!window.api) {
       console.warn('[CONFIRM-ACTION] window.api no disponible')
       return 'window.api no disponible'
@@ -2337,7 +2420,7 @@ function App() {
       setTermBusy(true)
       setShowTerminal(true)
       addTerm(`❯ ${action.content}`, 'cmd')
-      const cwd = action.filePath || rootDir || undefined
+      const cwd = action.filePath || targetRootDir || undefined
       const lines = action.content.split('\n').filter(l => l.trim())
       for (const line of lines) {
         if (!line.trim()) continue
@@ -2350,9 +2433,7 @@ function App() {
     }
 
     if (action.type === 'READ') {
-      const normRoot = (rootDir || '').replace(/\\/g, '/')
-      const normFile = (action.filePath || '').replace(/\\/g, '/')
-      const fp = normRoot ? normRoot.replace(/\/$/, '') + '/' + normFile.replace(/^\//, '') : normFile
+      const fp = normalizeProjectPath(action.filePath, targetRootDir)
       const r = await window.api.readFile(fp)
       if (r.ok) {
         addTerm(`📖 ${action.filePath} (${r.content.split('\n').length} líneas)`, 'out')
@@ -2368,9 +2449,7 @@ function App() {
       return
     }
 
-    const normRoot = (rootDir || '').replace(/\\/g, '/')
-    const normFile = (action.filePath || '').replace(/\\/g, '/')
-    const fp = normRoot ? normRoot.replace(/\/$/, '') + '/' + normFile.replace(/^\//, '') : normFile
+    const fp = normalizeProjectPath(action.filePath, targetRootDir)
 
     try {
       // Save to undo history before applying (solo si el archivo existe)
@@ -2398,6 +2477,7 @@ function App() {
       return e.message || String(e)
     }
 
+    const normFile = String(action.filePath || '').replace(/\\/g, '/')
     const rel = normFile
     const fpNorm = fp.replace(/\\/g, '/')
     const matchTab = tabs.find(t => t.filePath && (
@@ -2436,7 +2516,7 @@ function App() {
                  cmd: isWin ? 'winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements' : null,
                  url: 'https://nodejs.org/', restart: true },
       esbuild: { label: 'esbuild (verificador de JSX/TS)', why: 'verificar archivos .jsx, .ts y .tsx',
-                 cmd: rootDir ? 'npm install --save-dev esbuild' : null, url: null, restart: false },
+                 cmd: targetRootDir ? 'npm install --save-dev esbuild' : null, url: null, restart: false },
     }
     const toolMissing = (t) => /no se reconoce|is not recognized|not found|no such file or directory|command not found|cannot find the file|no se encuentra el archivo|missing packages|could not determine executable|npx canceled/i.test(t)
     // recorta el stack interno de node/npx que ensucia el error real
@@ -2465,7 +2545,7 @@ function App() {
         '',
         'Cancelar = seguir sin verificar este tipo de archivo (se informará como "sin verificar", nunca como correcto).',
       ].filter((l, i, a) => !(l === '' && a[i - 1] === ''))
-      setPendingAction({ action: { type: 'RUN', filePath: rootDir || '', content: t.cmd }, preview: lines.join('\n'), isRun: true })
+      setPendingAction({ action: { type: 'RUN', filePath: targetRootDir || '', content: t.cmd }, rootDir: targetRootDir, preview: lines.join('\n'), isRun: true })
       addTerm(`⚠ Falta ${t.label} para ${t.why}. Revisá el diálogo para instalarlo.`, 'err')
     }
 
@@ -2477,7 +2557,7 @@ function App() {
       let missing = false
       for (const cmd of checker.cmds) {
         try {
-          const r = await window.api.runCommand({ command: cmd, cwd: rootDir || undefined })
+          const r = await window.api.runCommand({ command: cmd, cwd: targetRootDir || undefined })
           const text = `${r.err || ''}\n${r.out || ''}`.trim()
           if (r.code === 0 || r.ok) { verified = true; break }
           if (toolMissing(text)) { missing = true; continue }   // ese intérprete no existe: probar el siguiente
@@ -2496,26 +2576,65 @@ function App() {
   }, [rootDir, tabs, updateContent, markCodeChanged])
 
   // Apply user/assistant actions directly without extra file preview
-  const applyAction = useCallback(async (action) => {
+  const applyAction = useCallback(async (action, evidence = {}) => {
     if (!window.api) return
 
+    const targetRootDir = Object.prototype.hasOwnProperty.call(evidence, 'rootDir') ? evidence.rootDir : rootDir
     if (action.type === 'RUN') {
-      setPendingAction({ action, preview: `Ejecutar:\n❯ ${action.content}`, isRun: true })
+      if (!targetRootDir) return { error: 'No se ejecutó el comando: no hay una carpeta de proyecto verificada para esta solicitud.' }
+      setPendingAction({ action, rootDir: targetRootDir, preview: `Ejecutar:\n❯ ${action.content}`, isRun: true })
       return
     }
 
-    await confirmAction(action)
+    if (action.type === 'READ' && !targetRootDir && !/^(?:[a-z]:[\\/]|\\\\|\/)/i.test(action.filePath || '')) {
+      return { error: `No leí "${action.filePath}": no hay una carpeta de proyecto verificada para resolver esta ruta relativa.` }
+    }
+
+    if (!['READ', 'RUN'].includes(action.type)) {
+      if (!targetRootDir) return { error: `No apliqué ${action.type} sobre "${action.filePath}": no hay una carpeta de proyecto verificada para esta solicitud.` }
+      const absolutePath = normalizeProjectPath(action.filePath, targetRootDir)
+      if (await window.api.exists(absolutePath) && findUnverifiedFileActions(
+        [action], targetRootDir, [absolutePath], evidence.verifiedReadPaths
+      ).length) {
+        return { error: `No apliqué ${action.type} sobre "${action.filePath}": el archivo existe y no hay constancia de una lectura completa en esta tarea.` }
+      }
+    }
+
+    await confirmAction(action, targetRootDir)
     return
-  }, [confirmAction])
+  }, [confirmAction, rootDir])
 
   const applyAll = useCallback(async (actions, opts = {}) => {
+    const targetRootDir = Object.prototype.hasOwnProperty.call(opts, 'rootDir') ? opts.rootDir : rootDir
     const errors = []
+    if (!targetRootDir && actions.some(action => action.type !== 'READ')) {
+      return {
+        ok: false,
+        errors: actions
+          .filter(action => action.type !== 'READ')
+          .map(action => `Bloqueado ${action.type} "${action.filePath || ''}": no hay una carpeta de proyecto verificada para esta solicitud.`),
+        applied: 0,
+        blocked: true,
+      }
+    }
+    for (const action of actions) {
+      if (['READ', 'RUN'].includes(action.type)) continue
+      const absolutePath = normalizeProjectPath(action.filePath, targetRootDir)
+      if (await window.api?.exists(absolutePath) && findUnverifiedFileActions(
+        [action], targetRootDir, [absolutePath], opts.verifiedReadPaths
+      ).length) {
+        errors.push(`Bloqueado ${action.type} "${action.filePath}": el archivo existe y no hay constancia de una lectura completa en esta tarea.`)
+      }
+    }
+    if (errors.length) {
+      return { ok: false, errors, applied: 0, blocked: true }
+    }
     // Herramientas locales: snapshot automático antes de un lote que toca 2+ archivos.
     // Es "mejor esfuerzo": si falla, no bloquea al agente (solo avisa en el terminal).
     const fileTouches = actions.filter(a => a.type !== 'RUN' && a.type !== 'READ')
-    if (fileTouches.length >= 2 && rootDir && settings.localTools !== false && settings.autoSnapshotAgent !== false && window.api?.localTools?.snapAuto) {
+    if (fileTouches.length >= 2 && targetRootDir && settings.localTools !== false && settings.autoSnapshotAgent !== false && window.api?.localTools?.snapAuto) {
       try {
-        const snap = await window.api.localTools.snapAuto(rootDir, 'agente')
+        const snap = await window.api.localTools.snapAuto(targetRootDir, 'agente')
         if (snap && snap.ok === false) {
           setTermLines(p => [...p, { type: 'info', text: `${new Date().toLocaleTimeString()} ⚠ No se pudo crear el snapshot previo: ${snap.error}` }])
         } else if (snap?.ok && !snap.skipped) {
@@ -2524,21 +2643,21 @@ function App() {
       } catch (e) { console.warn('[LOCAL-TOOLS] snapshot previo:', e?.message) }
     }
     for (const a of actions) {
-      const err = await confirmAction(a)
+      const err = await confirmAction(a, targetRootDir)
       if (err) errors.push(err)
     }
     // Verificación del proyecto: solo si el proyecto define el script "verify" en package.json
     // (no se lanzan builds pesados por sorpresa). Una vez por lote, no por archivo.
     const touchedCode = actions.some(a => a.type !== 'RUN' && a.type !== 'READ' && /\.(jsx?|tsx?|mjs|cjs)$/i.test(a.filePath || ''))
-    if (errors.length === 0 && touchedCode && rootDir && window.api) {
+    if (errors.length === 0 && touchedCode && targetRootDir && window.api) {
       try {
-        const root = rootDir.replace(/\\/g, '/').replace(/\/$/, '')
+        const root = targetRootDir.replace(/\\/g, '/').replace(/\/$/, '')
         const pk = await window.api.readFile(root + '/package.json')
         const hasVerify = pk.ok && !!JSON.parse(pk.content || '{}')?.scripts?.verify
         if (hasVerify) {
           setShowTerminal(true)
           setTermLines(p => [...p, { type: 'info', text: `${new Date().toLocaleTimeString()} 🔍 Verificando el proyecto (npm run verify)…` }])
-          const r = await window.api.runCommand({ command: 'npm run verify', cwd: rootDir })
+          const r = await window.api.runCommand({ command: 'npm run verify', cwd: targetRootDir })
           const text = `${r.err || ''}\n${r.out || ''}`.trim()
           if (r.code === 0 || r.ok) {
             setTermLines(p => [...p, { type: 'out', text: `${new Date().toLocaleTimeString()} ✔ Proyecto verificado` }])
@@ -3221,7 +3340,7 @@ function App() {
 
       <DiffModal
         pendingAction={pendingAction}
-        onConfirm={async (action) => { setPendingAction(null); const _err = await confirmAction(action); if (_err) setMsgs(p => [...p, { role:'assistant', content:'⚠️ Error de verificación en ' + action.type + ' ' + (action.filePath || '') + ':\n```\n' + _err.slice(0, 2000) + '\n```', _id: nextMsgId() }]) }}
+        onConfirm={async (action) => { setPendingAction(null); const targetRootDir = pendingAction && Object.prototype.hasOwnProperty.call(pendingAction, 'rootDir') ? pendingAction.rootDir : rootDir; const _err = await confirmAction(action, targetRootDir); if (_err) setMsgs(p => [...p, { role:'assistant', content:'⚠️ Error de verificación en ' + action.type + ' ' + (action.filePath || '') + ':\n```\n' + _err.slice(0, 2000) + '\n```', _id: nextMsgId() }]) }}
         onCancel={() => setPendingAction(null)}
       />
     </div>

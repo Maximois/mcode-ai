@@ -244,6 +244,49 @@ async function listDirFromDisk(dirPath) {
   }
 }
 
+export function normalizeProjectPath(filePath, rootDir = '') {
+  const rawPath = String(filePath || '').replace(/\\/g, '/')
+  if (!rawPath) return ''
+  const absolute = /^[a-z]:\//i.test(rawPath) || rawPath.startsWith('/')
+  const combined = (absolute || !rootDir ? rawPath : `${String(rootDir).replace(/\\/g, '/')}/${rawPath}`)
+    .replace(/\/{2,}/g, match => match.startsWith('//') ? '//' : '/')
+  const drive = combined.match(/^([a-z]:)(?:\/|$)/i)?.[1] || ''
+  const prefix = drive ? `${drive}/` : combined.startsWith('//') ? '//' : combined.startsWith('/') ? '/' : ''
+  const segments = combined.replace(/^([a-z]:)?\/+/i, '').split('/')
+  const normalized = []
+  for (const segment of segments) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      if (normalized.length) normalized.pop()
+    } else {
+      normalized.push(segment)
+    }
+  }
+  return (prefix + normalized.join('/')).replace(/\/$/, '')
+}
+
+export function extractWindowsPaths(text) {
+  const input = String(text || '')
+  const found = []
+  const add = value => {
+    const candidate = String(value || '').trim().replace(/[.,;:!?)}\]]+$/, '')
+    if (/^[a-z]:\\/i.test(candidate) && !found.includes(candidate)) found.push(candidate)
+  }
+  for (const match of input.matchAll(/["'`]([a-z]:\\[^"'`\r\n]+)["'`]/gi)) add(match[1])
+  for (const match of input.matchAll(/\b[a-z]:\\[^\s"'`<>|?*]+/gi)) add(match[0])
+  return found
+}
+
+export function findUnverifiedFileActions(actions, rootDir, existingPaths, verifiedReadPaths) {
+  const existing = new Set([...(existingPaths || [])].map(p => normalizeProjectPath(p, rootDir).toLowerCase()))
+  const verified = new Set([...(verifiedReadPaths || [])].map(p => normalizeProjectPath(p, rootDir).toLowerCase()))
+  return (actions || []).filter(action => {
+    if (['READ', 'RUN'].includes(action.type)) return false
+    const target = normalizeProjectPath(action.filePath, rootDir).toLowerCase()
+    return existing.has(target) && !verified.has(target)
+  })
+}
+
 // ── Screenshot handler (set by BrowserTab for webview capture) ──────
 let _screenshotHandler = null
 export function setScreenshotHandler(fn) { _screenshotHandler = fn }
@@ -314,8 +357,13 @@ function nativeJsonArgsToText(toolName, args) {
   return t
 }
 
-export async function executeToolCall(toolName, args, { projectFiles, rootDir }) {
+export async function executeToolCall(toolName, args, toolContext = {}) {
   try {
+    const { projectFiles, rootDir } = toolContext
+    const recordFullRead = filePath => {
+      if (!toolContext.readFiles) toolContext.readFiles = new Set()
+      toolContext.readFiles.add(normalizeProjectPath(filePath, rootDir))
+    }
     args = nativeJsonArgsToText(toolName, args)
     // Garantizar que args es string
     args = String(args || '').trim()
@@ -334,12 +382,16 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       }
       // Resolver ruta relativa contra rootDir (si no es absoluta)
       const isAbsolute = /^[/\\]|[a-zA-Z]:[/\\]/.test(filePath)
+      if (!rootDir && !isAbsolute) {
+        return '[Error: no hay una carpeta de proyecto verificada para resolver esta ruta relativa]'
+      }
       if (rootDir && !isAbsolute) {
         filePath = rootDir.replace(/\\/g, '/').replace(/\/$/, '') + '/' + filePath
       }
       // Primero intentar leer del disco (siempre es la versión más reciente)
       const fromDisk = await readFileFromDisk(filePath)
       if (fromDisk && !fromDisk.startsWith('[Error:') && !fromDisk.startsWith('[No disponible')) {
+        if (startLine === null) recordFullRead(filePath)
         if (startLine !== null && endLine !== null) {
           const allLines = fromDisk.split('\n')
           const sliced = allLines.slice(startLine - 1, endLine)
@@ -349,9 +401,12 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       }
       // Fallback: buscar en projectFiles (stale pero mejor que nada)
       if (projectFiles) {
-        const exact = projectFiles[filePath]
-        if (exact) {
-          if (exact === '[archivo muy grande, omitido]') return `[Archivo "${filePath}" muy grande, omitido]`
+        const exactEntry = Object.entries(projectFiles).find(([rel]) =>
+          normalizeProjectPath(rel, rootDir) === normalizeProjectPath(filePath, rootDir)
+        )
+        const exact = exactEntry?.[1]
+        if (exact != null && exact !== '[archivo muy grande, omitido]') {
+          if (startLine === null) recordFullRead(exactEntry[0])
           const lines = exact.split('\n')
           if (startLine !== null && endLine !== null) {
             const sliced = lines.slice(startLine - 1, endLine)
@@ -360,13 +415,14 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
           return lines.map((l, i) => `${i + 1}: ${l}`).join('\n')
         }
         // Coincidencia por nombre de archivo (sin ruta)
-        const byName = Object.keys(projectFiles).find(k =>
+        const byName = !isAbsolute && Object.keys(projectFiles).find(k =>
           k.replace(/\\/g, '/').split('/').pop() === filePath.split('/').pop().split('\\').pop()
         )
         if (byName) {
           const resolved = rootDir ? rootDir.replace(/\\/g, '/').replace(/\/$/, '') + '/' + byName : byName
           const fromDiskByName = await readFileFromDisk(resolved)
           if (fromDiskByName && !fromDiskByName.startsWith('[Error:') && !fromDiskByName.startsWith('[No disponible')) {
+            if (startLine === null) recordFullRead(resolved)
             if (startLine !== null && endLine !== null) {
               const allLines = fromDiskByName.split('\n')
               const sliced = allLines.slice(startLine - 1, endLine)
@@ -376,6 +432,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
           }
           const content = projectFiles[byName]
           if (content === '[archivo muy grande, omitido]') return `[Archivo "${byName}" muy grande, omitido]`
+          if (startLine === null) recordFullRead(resolved)
           const lines = content.split('\n')
           if (startLine !== null && endLine !== null) {
             const sliced = lines.slice(startLine - 1, endLine)
@@ -545,6 +602,7 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       const content = await readFileFromDisk(filePath)
       if (!content || content.startsWith('[Error') || content.startsWith('[No disponible'))
         return `[No se pudo leer "${filePath}"]`
+      recordFullRead(filePath)
       return `📋 **Review: ${filePath}**\n\n` + content + '\n\n---\n_Revisá el código arriba. Identificá: bugs, seguridad, performance, estilo, mejores prácticas._'
     }
     case 'rename': {
@@ -1644,7 +1702,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
     : 24
   const maxToolRounds = useAgent ? cappedAgentRounds : 4
 
-  const toolCtx = { projectFiles, rootDir }
+  const toolCtx = { projectFiles, rootDir, readFiles: new Set() }
   const runToolWrapped = async (name, argStr) => {
     const detail = (typeof argStr === 'string' ? argStr : JSON.stringify(argStr)).slice(0, 160)
     onToolProgress?.({ name, detail, phase: 'start' })
@@ -1652,7 +1710,7 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
       const result = await executeToolCall(name, typeof argStr === 'string' ? argStr : JSON.stringify(argStr), toolCtx)
       const s = String(result ?? '')
       const bad = s.startsWith('[Error:') || s.startsWith('[Herramienta desconocida')
-      onToolProgress?.({ name, detail, phase: 'done', ok: !bad })
+      onToolProgress?.({ name, detail, phase: 'done', ok: !bad, readFiles: [...toolCtx.readFiles] })
       return result
     } catch (e) {
       onToolProgress?.({ name, detail: e.message, phase: 'done', ok: false })
@@ -2251,10 +2309,16 @@ export function buildMessages({ projectFiles, activeFile, activeContent, memorie
 - Actuá de forma autónoma y directa; no agregues saludos, introducciones ni explicaciones previas.
 - No preguntes ni esperes confirmación. Ante ambigüedades menores, elegí la opción técnica más segura y documentá el resultado en una línea.
 - No afirmes que ejecutaste una acción hasta que la herramienta correspondiente la confirme.
+- No inventes rutas, archivos, APIs, pruebas, permisos, resultados de ejecución ni contenido de código.
+- Separá los hechos observados de las hipótesis. Si no tenés evidencia suficiente, decí qué dato no pudiste comprobar y por qué.
+- Usá los resultados reales de las herramientas; el índice del proyecto solo demuestra los nombres que contiene, no el contenido de un archivo.
 
 🛑 REGLA DE LECTURA — CERO ALUCINACIONES:
 - No adivines ni inventes el contenido de archivos.
 - Antes de modificar o basar una decisión en un archivo existente, leelo con \`[TOOL: readFile ruta]\` y esperá el resultado antes de generar cambios.
+- Para diagnosticar una integración, seguí el flujo real desde el punto de entrada hasta el consumidor y leé cada archivo implicado; no deduzcas contratos por nombres o por código parecido.
+- Afirmá que una prueba existe solo si la encontraste; afirmá que pasó solo si la ejecutaste y recibiste resultado exitoso.
+- Si una ruta explícita del pedido no aparece en el contexto del proyecto, usá \`listDir\` o \`readFile\` con esa ruta exacta. Si falla, informá el fallo y no sustituyas la ruta por una estructura supuesta.
 - Si el archivo activo ya está incluido íntegramente en el contexto, no hace falta volver a leerlo.
 
 HERRAMIENTAS DISPONIBLES — usá solo estos nombres:
@@ -2347,6 +2411,9 @@ REGLAS FINALES:
 
 ## Modo Agente (MCodeAI — automatizado)
 - **Exploración:** usá herramientas en una sola línea: \`[TOOL: readFile ruta/relativa]\`, \`[TOOL: grep patrón]\`, \`[TOOL: glob **/*.tsx]\`, \`[TOOL: searchProject texto]\`, \`[TOOL: listDir ruta]\`, etc. El editor ejecuta esas llamadas en bucle y te inyecta los resultados.
+- Antes de emitir PATCH/WRITE para un archivo existente, comprobá que la lectura completa de ese archivo figure en los resultados de esta tarea; una búsqueda, un nombre en el índice o una lectura parcial no cuentan como lectura completa.
+- Si una herramienta devuelve error, "sin resultados" o "no disponible", tratálo como falta de evidencia; nunca lo conviertas en una confirmación.
+- En el diagnóstico final, nombrá solo archivos y pruebas realmente observados, y separá explícitamente "Comprobado" de "Hipótesis" cuando corresponda.
 - Si el proveedor ofrece **function calling** nativo, usalo; equivale a [TOOL:…].
 - **Cambios en disco:** al final SIEMPRE incluí los bloques con cabecera exacta \`\`\`PATCH:ruta:lineaIni:lineaFin\`\`\`, \`\`\`WRITE:ruta\`\`\` o \`\`\`CREATE:ruta\`\`\` (tipo en MAYÚSCULAS). Sin eso **no** se guardan archivos aunque muestres código en \`\`\`js\`\`\`.
 - No pidas al usuario que copie ni confirme: el flujo es automático.`

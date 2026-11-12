@@ -9,7 +9,10 @@ globalThis.localStorage = { getItem: k => store.get(k) ?? null, setItem: (k, v) 
 globalThis.window = undefined
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const { normalizeTools, TOOL_RE } = await import(pathToFileURL(resolve(root, 'src/ai.js')).href)
+const {
+  normalizeTools, TOOL_RE, executeToolCall, extractWindowsPaths,
+  normalizeProjectPath, findUnverifiedFileActions,
+} = await import(pathToFileURL(resolve(root, 'src/ai.js')).href)
 const strip = t => normalizeTools(t).replace(new RegExp(TOOL_RE.source, TOOL_RE.flags), '').trim()
 const count = t => [...normalizeTools(t).matchAll(new RegExp(TOOL_RE.source, TOOL_RE.flags))].length
 
@@ -41,6 +44,12 @@ const captureCases = [
   ['[TOOL: createComponent Button]', [['createComponent', 'Button']]],
 ]
 let bad = 0
+const same = (label, got, want) => {
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    bad++
+    console.error(`  X ${label}: obtuvo ${JSON.stringify(got)}, esperaba ${JSON.stringify(want)}`)
+  }
+}
 for (const [input, want] of captureCases) {
   const got = parts(input)
   if (JSON.stringify(got) !== JSON.stringify(want)) { bad++; console.error(`  X captura ${JSON.stringify(input)}: obtuvo ${JSON.stringify(got)}, esperaba ${JSON.stringify(want)}`) }
@@ -52,5 +61,35 @@ for (const [input, n, left] of cases) {
     console.error(`  X ${JSON.stringify(input)}: herramientas=${gotN} (esperaba ${n}), sobra=${JSON.stringify(gotLeft)} (esperaba ${JSON.stringify(left)})`)
   }
 }
+
+same('ruta Windows relativa', normalizeProjectPath('src\\ai.js', 'C:\\repo'), 'C:/repo/src/ai.js')
+same('ruta Windows absoluta', normalizeProjectPath('C:\\repo\\src\\ai.js', 'C:\\otro'), 'C:/repo/src/ai.js')
+same('rutas Windows explicitas', extractWindowsPaths('Revisá "C:\\Downloads\\app" y C:\\work\\main.js.'), [
+  'C:\\Downloads\\app', 'C:\\work\\main.js',
+])
+same('bloqueo de archivos existentes sin lectura completa', findUnverifiedFileActions([
+  { type: 'PATCH', filePath: 'src\\ai.js' },
+  { type: 'WRITE', filePath: 'src\\nuevo.js' },
+], 'C:\\repo', ['C:\\repo\\src\\ai.js'], []), [
+  { type: 'PATCH', filePath: 'src\\ai.js' },
+])
+same('permite editar archivo existente leido', findUnverifiedFileActions([
+  { type: 'PATCH', filePath: 'src\\ai.js' },
+], 'C:\\repo', ['C:\\repo\\src\\ai.js'], ['c:\\repo\\src\\ai.js']), [])
+
+globalThis.window = { api: { readFile: async () => ({ ok: true, content: 'const value = 1' }) } }
+const fullReadContext = { rootDir: 'C:\\repo' }
+await executeToolCall('readFile', 'src\\ai.js', fullReadContext)
+same('lectura completa registra evidencia', [...(fullReadContext.readFiles || [])], ['C:/repo/src/ai.js'])
+const partialReadContext = { rootDir: 'C:\\repo' }
+await executeToolCall('readFile', 'src\\ai.js:1-1', partialReadContext)
+same('lectura parcial no autoriza edicion', [...(partialReadContext.readFiles || [])], [])
+let rootlessReadCalls = 0
+globalThis.window = { api: { readFile: async () => { rootlessReadCalls++; return { ok: true, content: 'unexpected' } } } }
+const rootlessRead = await executeToolCall('readFile', 'src\\ai.js', {})
+same('lectura relativa bloqueada sin proyecto verificado', rootlessRead, '[Error: no hay una carpeta de proyecto verificada para resolver esta ruta relativa]')
+same('lectura relativa no toca disco sin raiz', rootlessReadCalls, 0)
+globalThis.window = undefined
+
 if (bad) { console.error(`parser de herramientas: ${bad} caso(s) fallaron`); process.exit(1) }
-console.log(`  OK (${cases.length + captureCases.length} casos)`)
+console.log(`  OK (${cases.length + captureCases.length + 9} casos)`)

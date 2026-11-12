@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('api', {
   // ── Filesystem ──────────────────────────────────────────────────────────────
   readFile:       (p)            => ipcRenderer.invoke('fs-read', p),
+  statPath:       (p)            => ipcRenderer.invoke('fs-stat', p),
   writeFile:      (args)         => ipcRenderer.invoke('fs-write', args),
   writeLines:     (args)         => ipcRenderer.invoke('fs-write-lines', args),
   readDir:        (dir)          => ipcRenderer.invoke('fs-readdir', dir),

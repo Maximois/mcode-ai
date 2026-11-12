@@ -350,6 +350,13 @@ ipcMain.handle('fs-read', (_, p) => {
   catch (e) { return { ok: false, error: e.message } }
 })
 
+ipcMain.handle('fs-stat', (_, p) => {
+  try {
+    const stat = fs.statSync(p)
+    return { ok: true, isFile: stat.isFile(), isDirectory: stat.isDirectory(), size: stat.size }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
 ipcMain.handle('open-extensions-folder', async () => {
   try {
     await shell.openPath(EXTENSIONS_DIR)
