@@ -1,0 +1,21 @@
+---
+id: tab-manager
+category: Interfaz (Electron)
+title: Gestor de pestañas liviano
+language: html
+description: Pestañas con un solo conjunto de paneles, sin librerías. Se activa por data-tab.
+---
+<div class="tabs">
+  <button class="tab active" data-tab="a">Uno</button>
+  <button class="tab" data-tab="b">Dos</button>
+</div>
+<section class="panel" data-panel="a">Contenido uno</section>
+<section class="panel" data-panel="b" hidden>Contenido dos</section>
+<script>
+  document.querySelectorAll('.tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === btn))
+      document.querySelectorAll('.panel').forEach((p) => { p.hidden = p.dataset.panel !== btn.dataset.tab })
+    })
+  })
+</script>

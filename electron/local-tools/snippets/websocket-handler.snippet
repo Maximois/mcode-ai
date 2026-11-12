@@ -1,0 +1,22 @@
+---
+id: websocket-handler
+category: Redes y servidores
+title: Manejador WebSocket (broadcast)
+language: javascript
+description: Servidor WebSocket que reenvía cada mensaje a todos los clientes. Requiere el paquete ws.
+params: port=8080|Puerto
+deps: ws
+validate: js
+---
+const { WebSocketServer } = require('ws')
+
+const wss = new WebSocketServer({ port: {{port}}, host: '127.0.0.1' })
+
+wss.on('connection', (socket) => {
+  socket.on('message', (data) => {
+    for (const client of wss.clients) {
+      if (client.readyState === 1) client.send(data.toString())
+    }
+  })
+  socket.on('error', (err) => console.error('WS error:', err.message))
+})

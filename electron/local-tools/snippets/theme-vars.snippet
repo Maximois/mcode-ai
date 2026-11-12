@@ -1,0 +1,18 @@
+---
+id: theme-vars
+category: Interfaz (Electron)
+title: Tema claro/oscuro con variables CSS
+language: css
+description: Variables CSS con tema oscuro por defecto y claro según prefers-color-scheme o data-theme="light".
+params: accent=#7c6af7|Color de acento
+---
+:root {
+  --bg: #0a0a0c;
+  --text: #c8c8d4;
+  --accent: {{accent}};
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --bg: #ffffff; --text: #1a1a20; }
+}
+:root[data-theme="light"] { --bg: #ffffff; --text: #1a1a20; }
+body { background: var(--bg); color: var(--text); }

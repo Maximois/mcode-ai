@@ -1,0 +1,25 @@
+---
+id: mini-assert
+category: Pruebas y rendimiento
+title: Mini framework de aserciones
+language: javascript
+description: test(), assertEqual() y summary() sin dependencias. summary() deja el código de salida en 1 si algo falla.
+validate: js
+---
+let passed = 0, failed = 0
+
+function test(name, fn) {
+  try { fn(); passed++; console.log('  ok   ' + name) }
+  catch (e) { failed++; console.error('  FAIL ' + name + ': ' + e.message) }
+}
+
+function assertEqual(actual, expected, msg = 'valores distintos') {
+  if (!Object.is(actual, expected)) {
+    throw new Error(`${msg} (esperado ${JSON.stringify(expected)}, recibido ${JSON.stringify(actual)})`)
+  }
+}
+
+function summary() {
+  console.log(`\n${passed} ok, ${failed} fallidos`)
+  if (failed) process.exitCode = 1
+}

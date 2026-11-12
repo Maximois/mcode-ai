@@ -1,0 +1,41 @@
+# NPM ignore file
+# Archivos que NO se empaquetan si publicas en npm
+
+# Configuración
+.github/
+.vscode/
+.gitignore
+.gitattributes
+
+# Build temporales
+dist-electron/
+.vite/
+node_modules/
+
+# Desarrollo
+*.swp
+*.swo
+*~
+.DS_Store
+.env.local
+.env.*.local
+
+# Documentación de desarrollo
+CONTRIBUTING.md
+CHANGELOG.md
+SECURITY.md
+resumen-editor.md
+
+# Archivos de launcher
+launcher.bat
+
+# Editor config
+.idea/
+*.log
+
+# Pruebas
+coverage/
+test/
+
+# Reverse engineering
+electron/reverse-engineering/

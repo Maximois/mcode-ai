@@ -1,0 +1,17 @@
+---
+id: time-it
+category: Pruebas y rendimiento
+title: Cronómetro de alta precisión
+language: javascript
+description: Mide cuánto tarda una función (sync o async) con process.hrtime y lo imprime en ms. Alternativa rápida - console.time.
+validate: js
+---
+async function timeIt(label, fn) {
+  const t0 = process.hrtime.bigint()
+  try {
+    return await fn()
+  } finally {
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6
+    console.log(`${label}: ${ms.toFixed(2)} ms`)
+  }
+}

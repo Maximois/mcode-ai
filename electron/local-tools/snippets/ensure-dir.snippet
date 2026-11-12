@@ -1,0 +1,14 @@
+---
+id: ensure-dir
+category: Sistema de archivos
+title: Crear carpetas recursivamente
+language: javascript
+description: Crea una carpeta y todas sus intermedias si no existen.
+validate: js
+---
+const fs = require('fs')
+
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true })
+  return dirPath
+}
