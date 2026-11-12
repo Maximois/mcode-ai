@@ -649,12 +649,23 @@ ipcMain.handle('fs-glob', async (_, { rootDir, pattern }) => {
   } catch (e) { return [] }
 })
 
-ipcMain.handle('fs-project-context', (_, rootDir) => {
+ipcMain.handle('fs-project-context', (_, rootDir, opts) => {
   const result = {}
+  let count = 0
   let totalChars = 0
   const MAX_FILE_SIZE = 100 * 1024  // 100KB per file
   const MAX_FILES = 200
   const MAX_TOTAL_CHARS = 600000    // ~600KB total context
+  const MAX_DEPTH = 6
+  const MAX_EXTRA = 1500            // nombres de archivos que no entraron (solo ruta, sin contenido)
+  const MAX_VISITED = 30000         // tope de seguridad del recorrido (equipos con poca RAM)
+  const SKIP = ['node_modules','__pycache__','dist','.git','dist-electron',
+    '.venv','venv','env','build','target','vendor','bower_components',
+    '.next','.nuxt','coverage','.cache','tmp','temp','logs','out']
+
+  // Resumen del recorte: el agente lo recibe para NO concluir "ese archivo no existe" cuando solo quedó fuera del tope.
+  const meta = { truncated: false, reasons: [], extraFiles: [], skippedLarge: 0, depthCut: 0, skippedDirs: [], visited: 0 }
+  const skippedDirs = new Set()
 
   function isTextFile(name) {
     const ext = name.split('.').pop()?.toLowerCase()
@@ -663,46 +674,61 @@ ipcMain.handle('fs-project-context', (_, rootDir) => {
   }
 
   function walk(dir, depth = 0) {
-    if (depth > 6) return
-    if (Object.keys(result).length >= MAX_FILES) return
-    if (totalChars >= MAX_TOTAL_CHARS) return
+    if (depth > MAX_DEPTH) { meta.depthCut++; return }
+    if (meta.visited >= MAX_VISITED) return
 
+    let entries
     try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true })
-        .filter(e => {
-          if (e.name.startsWith('.')) return false
-          const skip = ['node_modules','__pycache__','dist','.git','dist-electron',
-            '.venv','venv','env','build','target','vendor','bower_components',
-            '.next','.nuxt','coverage','.cache','tmp','temp','logs','out']
-          return !skip.includes(e.name.toLowerCase())
-        })
+      entries = fs.readdirSync(dir, { withFileTypes: true }).filter(e => {
+        if (e.name.startsWith('.')) return false
+        if (SKIP.includes(e.name.toLowerCase())) {
+          if (e.isDirectory()) skippedDirs.add(path.relative(rootDir, path.join(dir, e.name)).replace(/\\/g, '/'))
+          return false
+        }
+        return true
+      })
+    } catch { return }
 
-      for (const e of entries) {
-        if (Object.keys(result).length >= MAX_FILES) break
-        if (totalChars >= MAX_TOTAL_CHARS) break
+    for (const e of entries) {
+      if (++meta.visited >= MAX_VISITED) break
+      const full = path.join(dir, e.name)
+      if (e.isDirectory()) { walk(full, depth + 1); continue }
+      if (!isTextFile(e.name)) continue
 
-        const full = path.join(dir, e.name)
-        if (e.isDirectory()) { walk(full, depth + 1); continue }
-
-        if (!isTextFile(e.name)) continue
-
-        const rel = path.relative(rootDir, full).replace(/\\/g, '/')
-        try {
-          const stat = fs.statSync(full)
-          if (stat.size > MAX_FILE_SIZE) {
-            result[rel] = '[archivo muy grande, omitido]'
-            continue
-          }
-          const content = fs.readFileSync(full, 'utf8')
-          result[rel] = content
-          totalChars += content.length
-        } catch {}
+      const rel = path.relative(rootDir, full).replace(/\\/g, '/')
+      // Tope alcanzado: seguimos recorriendo, pero solo anotamos el nombre (sin leer contenido)
+      if (count >= MAX_FILES || totalChars >= MAX_TOTAL_CHARS) {
+        if (meta.extraFiles.length < MAX_EXTRA) meta.extraFiles.push(rel)
+        continue
       }
-    } catch {}
+      try {
+        const stat = fs.statSync(full)
+        if (stat.size > MAX_FILE_SIZE) {
+          result[rel] = '[archivo muy grande, omitido]'
+          count++; meta.skippedLarge++
+          continue
+        }
+        const content = fs.readFileSync(full, 'utf8')
+        result[rel] = content
+        count++
+        totalChars += content.length
+      } catch {}
+    }
   }
 
   walk(rootDir)
-  return result
+
+  if (meta.extraFiles.length) {
+    meta.truncated = true
+    meta.reasons.push(count >= MAX_FILES ? `tope de ${MAX_FILES} archivos` : `tope de ${Math.round(MAX_TOTAL_CHARS / 1000)} KB de texto`)
+  }
+  if (meta.depthCut) { meta.truncated = true; meta.reasons.push(`carpetas a más de ${MAX_DEPTH} niveles (${meta.depthCut})`) }
+  if (meta.visited >= MAX_VISITED) { meta.truncated = true; meta.reasons.push('recorrido cortado por tamaño del proyecto') }
+  meta.skippedDirs = [...skippedDirs].slice(0, 30)
+  meta.loaded = count
+
+  // Compatibilidad: sin opts devuelve solo el mapa {ruta: contenido} como antes.
+  return opts && opts.withMeta ? { files: result, meta } : result
 })
 
 ipcMain.handle('settings-load', async () => {
@@ -712,6 +738,44 @@ ipcMain.handle('settings-load', async () => {
 ipcMain.handle('settings-save', async (_, settings) => {
   await writeSettings(settings)
   return { ok: true }
+})
+
+// ── Historial de chat por proyecto ───────────────────────────────────────────
+// Un archivo por proyecto en <userData>/chats/. Solo texto (se descartan imágenes base64) y con tope de tamaño.
+const CHAT_MAX_MESSAGES = 300
+const CHAT_MAX_BYTES = 4 * 1024 * 1024
+function chatFileFor(rootDir) {
+  const key = require('crypto').createHash('sha1').update(String(rootDir).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()).digest('hex').slice(0, 20)
+  return path.join(app.getPath('userData'), 'chats', key + '.json')
+}
+ipcMain.handle('chat-load', async (_, rootDir) => {
+  try {
+    if (typeof rootDir !== 'string' || !rootDir) return { ok: false, error: 'sin proyecto' }
+    const f = chatFileFor(rootDir)
+    if (!fs.existsSync(f)) return { ok: true, msgs: [] }
+    const data = JSON.parse(fs.readFileSync(f, 'utf8'))
+    return { ok: true, msgs: Array.isArray(data.msgs) ? data.msgs : [], savedAt: data.savedAt || 0 }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+ipcMain.handle('chat-save', async (_, rootDir, msgs) => {
+  try {
+    if (typeof rootDir !== 'string' || !rootDir || !Array.isArray(msgs)) return { ok: false, error: 'datos inválidos' }
+    let clean = msgs
+      .filter(m => m && typeof m === 'object' && (m.type === 'agent_log' || m.type === 'marker' || typeof m.content === 'string'))
+      .map(m => { const { image, ...rest } = m; return rest })
+      .slice(-CHAT_MAX_MESSAGES)
+    let json = JSON.stringify({ v: 1, savedAt: Date.now(), msgs: clean })
+    while (Buffer.byteLength(json) > CHAT_MAX_BYTES && clean.length > 10) {
+      clean = clean.slice(Math.ceil(clean.length * 0.2))
+      json = JSON.stringify({ v: 1, savedAt: Date.now(), msgs: clean })
+    }
+    const f = chatFileFor(rootDir)
+    fs.mkdirSync(path.dirname(f), { recursive: true })
+    const tmp = f + '.tmp'
+    fs.writeFileSync(tmp, json, 'utf8')
+    fs.renameSync(tmp, f)
+    return { ok: true, count: clean.length }
+  } catch (e) { return { ok: false, error: e.message } }
 })
 
 // ── Web server ───────────────────────────────────────────────────────────────

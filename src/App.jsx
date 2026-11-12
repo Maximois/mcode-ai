@@ -7,6 +7,7 @@ import {
   imageToBase64, modelSupportsVision, describeImage, pushUndo, undoHistory, addExperience, searchExperience, getExperienceStats, getTimeline,
 } from './ai.js'
 import { useSettings } from './hooks/useSettings.js'
+import { contextWindowFor, promptBudgetFor, findUnreadTargets, normRel } from './agentContext.js'
 import { useTabs, getLang } from './hooks/useTabs.js'
 import { useMemory } from './hooks/useMemory.js'
 import BrowserTab from './BrowserTab.jsx'
@@ -678,6 +679,33 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
   const msgIdCounter = useRef(0)
   const nextMsgId = () => ++msgIdCounter.current
   const [msgs, setMsgs]       = useState([{ role:'assistant', content:'Hola! Soy **MCodeAI Pre**. Abrí un proyecto o archivo y preguntame lo que necesités.', _id: 'welcome' }])
+  // ── Historial de chat por proyecto (se guarda en userData/chats, un archivo por carpeta) ──
+  const chatOwnerRef = useRef(null)    // rootDir al que pertenecen los mensajes cargados (null = aún cargando)
+  const WELCOME = [{ role:'assistant', content:'Hola! Soy **MCodeAI Pre**. Abrí un proyecto o archivo y preguntame lo que necesités.', _id: 'welcome' }]
+  useEffect(() => {
+    chatOwnerRef.current = null
+    if (!rootDir || !window.api?.chatLoad) return
+    let cancelled = false
+    window.api.chatLoad(rootDir).then(r => {
+      if (cancelled) return
+      const saved = r?.ok && Array.isArray(r.msgs) ? r.msgs : []
+      const maxId = saved.reduce((mx, m) => (typeof m._id === 'number' && m._id > mx ? m._id : mx), 0)
+      if (maxId > msgIdCounter.current) msgIdCounter.current = maxId
+      // Si el usuario cambió de proyecto, el chat visible es el del proyecto anterior (o la bienvenida): se reemplaza.
+      // Si ya empezó a escribir en este proyecto antes de que termine la carga, no se pisa.
+      setMsgs(cur => (cur.length === 1 && cur[0]?._id === 'welcome') || cur.every(m => m._id === 'welcome' || !m._id) ? (saved.length ? saved : WELCOME) : (saved.length ? [...saved, ...cur.filter(m => m._id !== 'welcome')] : cur))
+      chatOwnerRef.current = rootDir
+    }).catch(() => { chatOwnerRef.current = rootDir })
+    return () => { cancelled = true }
+  }, [rootDir])
+  useEffect(() => {
+    if (!rootDir || !window.api?.chatSave || chatOwnerRef.current !== rootDir) return
+    if (msgs.length === 1 && msgs[0]?._id === 'welcome') return
+    const t = setTimeout(() => { window.api.chatSave(rootDir, msgs).catch(() => {}) }, 800)
+    return () => clearTimeout(t)
+  }, [msgs, rootDir])
+
+  const readSeenRef = useRef(new Set())   // archivos que el agente leyó realmente en este turno
   const [input, setInput]     = useState('')
   const [image, setImage]     = useState(null)   // { base64, name, preview }
   const [busy, setBusy]       = useState(false)
@@ -806,10 +834,13 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
     abortRef.current = ab
 
     const agentModeEffective = !settings.pipeline && settings.agentMode !== false
+    readSeenRef.current = new Set()
 
     try {
       // Parallel: route + relevance
-      const freshFiles = rootDir && window.api ? await window.api.projectContext(rootDir).catch(() => null) : projectFiles
+      const ctxRes = rootDir && window.api ? await window.api.projectContext(rootDir, { withMeta: true }).catch(() => null) : null
+      const freshFiles = rootDir && window.api ? (ctxRes?.files ?? null) : projectFiles
+      const projectMeta = ctxRes?.meta ?? null
       const lastQ = text.trim()
       const needsRoute  = prov === 'auto'
       // Con un solo modelo elegido NO se consulta OpenRouter por su cuenta (salvo "APIs auxiliares" activadas)
@@ -886,6 +917,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
         }
       }
 
+      const ctxNotes = { compacted: 0 }
       const baseMessages = buildMessages({
         projectFiles:         freshFiles,
         activeFile:           activeTab?.filePath || activeTab?.name,
@@ -897,9 +929,12 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
         projectSearchResults: localProjectSearch,
         devLogs,
         webPageIntel,
-        tokenBudget:          25000,
+        tokenBudget:          promptBudgetFor(contextWindowFor(activeProv, activeModel, settings.contextTokens)),
         agentMode:            agentModeEffective,
+        projectMeta,
+        ctxNotes,
       })
+      if (ctxNotes.compacted > 0) setWorkText(`Historial compactado (${ctxNotes.compacted} mensajes viejos resumidos)`)
 
       // Stream response
       let aiMsg = { role:'assistant', content:'', provider: activeProv, model: activeModel, _id: nextMsgId() }
@@ -966,6 +1001,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
             onChunk: onChunkCallback,
             agentMode: agentModeEffective,
             onStatus: ({ text: st }) => { if (st) setWorkText(st) },
+            onFileRead: (rel) => { if (rel) readSeenRef.current.add(rel) },
             onToolProgress: ({ phase, name, detail, ok }) => {
               const nm = name || '?', dt = detail || ''
               if (phase === 'start') {
@@ -1020,7 +1056,8 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
           if (finalAssistantContent.trim() && window.api) {
             const allActs = parseActions(finalAssistantContent)
             console.log(`[AI-RESPONSE] Acciones parseadas: ${allActs.length}`, allActs.map(a => ({ type: a.type, path: a.filePath })))
-            if (allActs.length > 0 && !rootDir) {
+            const patchAuto = settings.patchApplyMode === 'auto'   // por defecto MANUAL: nada se escribe sin clic
+            if (allActs.length > 0 && !rootDir && patchAuto) {
               setMsgs(p => [...p, { role:'assistant', content:'ℹ️ La respuesta incluye parches (`\`\`\`PATCH/WRITE/CREATE\`\`\``). Aplicando directamente...', _id: nextMsgId() }])
             }
             if (allActs.length === 0) {
@@ -1031,7 +1068,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
             const fileActs = allActs.filter(a => a.type !== 'RUN' && a.type !== 'READ')
             const readActs = allActs.filter(a => a.type === 'READ')
             const runActs = allActs.filter(a => a.type === 'RUN')
-            console.log(`[AI-RESPONSE] Auto-aplicar config:`, { autoApplyAiPatches: settings.autoApplyAiPatches, fileActs: fileActs.length, readActs: readActs.length, runActs: runActs.length })
+            console.log(`[AI-RESPONSE] Modo de parches:`, { patchApplyMode: patchAuto ? 'auto' : 'manual', fileActs: fileActs.length, readActs: readActs.length, runActs: runActs.length })
             if (allActs.length > 0 && fileActs.length === 0 && runActs.length === 0) {
               const detail = readActs.length > 0 
                 ? `ℹ️ La respuesta incluye solo acciones de lectura (READ: ${readActs.map(a => a.filePath).join(', ')}). No hay parches para aplicar automáticamente.`
@@ -1052,7 +1089,33 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
               })
             }
 
-            if (settings.autoApplyAiPatches !== false && fileActs.length > 0 && window.api) {
+            // Guardia "leé antes de parchear": archivos existentes que el agente NO leyó en este turno
+            // (el archivo activo y los relevantes ya vienen completos en el contexto y cuentan como vistos).
+            const seen = new Set(readSeenRef.current)
+            const ctxFile = activeTab?.filePath || activeTab?.name
+            if (ctxFile) seen.add(normRel(ctxFile, rootDir))
+            for (const rf of (Array.isArray(relevantFiles) ? relevantFiles : [])) seen.add(normRel(rf, rootDir))
+            const existing = new Set([...Object.keys(freshFiles || {}), ...(projectMeta?.extraFiles || [])])
+            const unread = findUnreadTargets(fileActs, { seen, existing, rootDir })
+
+            if (fileActs.length > 0 && !patchAuto) {
+              // MODO MANUAL: se muestran los botones "Aplicar"; no se escribe nada solo.
+              const warn = unread.length ? `\n⚠ No leyó antes de parchear: ${unread.join(', ')} — revisá bien las líneas antes de aplicar.` : ''
+              const note = `\n\n— ✋ *Modo manual: ${fileActs.length} cambio(s) pendientes, revisá y pulsá Aplicar.*${warn} —`
+              const nextContent = (pendingRef.current || aiMsg.content) + note
+              pendingRef.current = nextContent
+              aiMsg = { ...aiMsg, content: nextContent }
+              setMsgs(p => {
+                const last = p[p.length - 1]
+                if (!last || last.role !== 'assistant' || last._id !== aiMsg._id) return p
+                return [...p.slice(0, -1), { ...last, content: nextContent }]
+              })
+            } else if (patchAuto && unread.length > 0 && autoFixCount.current < 20) {
+              // MODO AUTO + parche sin lectura previa: no se aplica; se le pide leer primero.
+              autoFixCount.current++
+              setMsgs(p => [...p, { role:'assistant', content:`🛑 No apliqué los cambios: el agente no leyó antes ${unread.join(', ')}. Se le pide que lo lea primero.`, _id: nextMsgId() }])
+              queueMicrotask(() => send(`No se aplicó ningún cambio porque no leíste antes: ${unread.join(', ')}.\nLeé cada archivo con readFile (te devuelve las líneas numeradas), y recién entonces enviá los bloques PATCH/WRITE con los números de línea correctos.`, { auto: true }))
+            } else if (patchAuto && fileActs.length > 0 && window.api) {
               console.log(`[AUTO-APPLY] Intentando aplicar ${fileActs.length} acciones: ${fileActs.map(a => a.type).join(', ')}`)
               const r = await onApplyAll(fileActs, {
                 onError: (errMsg) => {
@@ -1072,10 +1135,10 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
                 console.warn(`[AUTO-APPLY] Falló. Errores: ${r?.errors?.length || 'desconocido'}`)
               }
             } else if (fileActs.length > 0) {
-              console.log(`[AUTO-APPLY] Omitido - autoApplyAiPatches: ${settings.autoApplyAiPatches}, window.api: ${!!window.api}`)
+              console.log(`[AUTO-APPLY] Omitido - modo: ${patchAuto ? 'auto' : 'manual'}, window.api: ${!!window.api}`)
             }
 
-            if (settings.autoApplyAiRun && runActs.length > 0) {
+            if (patchAuto && settings.autoApplyAiRun && runActs.length > 0) {
               await onApplyAll(runActs, {
                 onError: (errMsg) => {
                   setMsgs(p => [...p, { role:'assistant', content:'⚠️ Auto-ejecutar RUN:\n```\n' + errMsg.slice(0, 1500) + '\n```', _id: nextMsgId() }])
@@ -1225,6 +1288,12 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
           const r = await window.api.saveFile('chat-export.md', text)
           if (r) setMsgs(p => [...p, { role:'assistant', content:`✅ Chat exportado: \`${r}\``, _id: nextMsgId() }])
         }} title="Exportar chat">💾</button>
+        <button className="icon-btn"
+          onClick={() => updateSettings({ patchApplyMode: settings.patchApplyMode === 'auto' ? 'manual' : 'auto' })}
+          title={settings.patchApplyMode === 'auto' ? 'Automático: los parches se aplican solos. Clic para pasar a Manual' : 'Manual: los parches esperan tu clic en Aplicar. Clic para pasar a Automático'}
+          style={{ color: settings.patchApplyMode === 'auto' ? 'var(--orange,#ce9178)' : 'var(--green,#4ec9b0)' }}>
+          {settings.patchApplyMode === 'auto' ? '⚡ Auto' : '✋ Manual'}
+        </button>
         <button className="icon-btn" onClick={() => setMsgs([{ role:'assistant', content:'Chat reiniciado.', _id: nextMsgId() }])} title="Limpiar chat">⌫</button>
         {undoHistory.length > 0 && (
           <span className="undo-badge" title={`${undoHistory.length} cambio(s) para deshacer`}>↩ {undoHistory.length}</span>
@@ -1495,9 +1564,24 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
               <span style={{ fontSize: 9, color: 'var(--text-3)' }}>Con agente ON, sin Pipeline</span>
             </label>
             <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
-              <input type="checkbox" checked={settings.autoApplyAiPatches !== false}
-                onChange={e => updateSettings({ autoApplyAiPatches: e.target.checked })} />
-              <span>Aplicar automáticamente archivos (PATCH, WRITE, CREATE)</span>
+              <select className="settings-select-sm" value={settings.patchApplyMode === 'auto' ? 'auto' : 'manual'}
+                onChange={e => updateSettings({ patchApplyMode: e.target.value })}>
+                <option value="manual">✋ Manual (recomendado)</option>
+                <option value="auto">⚡ Automático</option>
+              </select>
+              <span>Cómo se aplican los cambios del agente (PATCH, WRITE, CREATE). Manual: los revisás y pulsás Aplicar</span>
+            </label>
+            <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8 }}>
+              <select className="settings-select-sm" value={String(Number(settings.contextTokens) || 0)}
+                onChange={e => updateSettings({ contextTokens: Number(e.target.value) })}>
+                <option value="0">Auto (según el modelo)</option>
+                <option value="8000">8K</option>
+                <option value="16000">16K</option>
+                <option value="32000">32K</option>
+                <option value="64000">64K</option>
+                <option value="128000">128K</option>
+              </select>
+              <span>Ventana de contexto: el chat se compacta solo cuando no entra</span>
             </label>
             <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
               <input type="checkbox" checked={!!settings.autoApplyAiRun}

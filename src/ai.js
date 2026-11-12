@@ -3,6 +3,8 @@
 //  Providers: Ollama · Groq · Gemini · OpenRouter · Zen · Cerebras · Mistral · Together
 // ════════════════════════════════════════════════════════════════════════════
 
+import { estTokens as _estTok, compactHistory, indexNotice, buildCompactIndex, readTargetOf } from './agentContext.js'
+
 // ── Tool calling (text-based, any provider) ───────────────────────────────────
 const _toolNames = '(?:run|readFile|searchProject|listDir|glob|grep|searchWeb|fetchURL|git|createPlan|updatePlan|listPlans|undo|tree|review|rename|createComponent|changelog|learn|remember|experience|timeline|screenshot)'
 const _toolAlt = _toolNames.slice(3, -1)   // 'run|readFile|...' (sin "(?:" ni ")")
@@ -387,24 +389,28 @@ export async function executeToolCall(toolName, args, { projectFiles, rootDir })
       return await readFileFromDisk(filePath)
     }
     case 'searchproject': {
+      const query = String(args || '').trim()
+      if (!query) return '[Indicá un texto a buscar]'
+      // Búsqueda en DISCO (todo el proyecto), no en el mapa recortado en memoria: evita "Sin resultados"
+      // falsos para archivos que quedaron fuera del tope de contexto.
+      if (rootDir && typeof window !== 'undefined' && window.api?.toolGrep) {
+        const r = await window.api.toolGrep(rootDir, query)
+        if (r && r.length > 0) {
+          return r.slice(0, 10).map(g => `=== ${g.file} ===\n` + g.matches.map(m => `  ${m.line}: ${m.text}`).join('\n')).join('\n\n')
+        }
+        return `[Sin resultados para "${query}" en el proyecto (búsqueda en disco)]`
+      }
       if (!projectFiles) return '[Sin proyecto cargado]'
-      const query = String(args || '').trim().toLowerCase()
+      const q = query.toLowerCase()
       const results = []
       for (const [rel, content] of Object.entries(projectFiles)) {
         if (!content || content === '[archivo muy grande, omitido]') continue
-        const lower = content.toLowerCase()
-        if (lower.includes(query)) {
-          const lines = content.split('\n')
-          const matchLines = []
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i].toLowerCase().includes(query)) {
-              matchLines.push({ line: i + 1, text: lines[i].trim() })
-            }
-          }
-          results.push({ file: rel, matches: matchLines.slice(0, 10) })
-        }
+        if (!content.toLowerCase().includes(q)) continue
+        const matchLines = []
+        content.split('\n').forEach((l, i) => { if (l.toLowerCase().includes(q)) matchLines.push({ line: i + 1, text: l.trim() }) })
+        results.push({ file: rel, matches: matchLines.slice(0, 10) })
       }
-      if (results.length === 0) return `[Sin resultados para "${String(args || '').trim()}"]`
+      if (results.length === 0) return `[Sin resultados para "${query}" en los archivos cargados]`
       return results.slice(0, 10).map(r =>
         `=== ${r.file} ===\n` + r.matches.map(m => `  ${m.line}: ${m.text}`).join('\n')
       ).join('\n\n')
@@ -1635,7 +1641,7 @@ async function runSmartPipeline({ userQuestion, projectFiles, relevantFiles, roo
 
 // ── sendToAI principal ────────────────────────────────────────────────────────
 
-export async function sendToAI({ provider, model, apiKey, messages, signal, onChunk, settings, imageBase64, activeFile, activeContent, projectFiles, relevantFiles, rootDir, onToolProgress, onStatus, agentMode }) {
+export async function sendToAI({ provider, model, apiKey, messages, signal, onChunk, settings, imageBase64, activeFile, activeContent, projectFiles, relevantFiles, rootDir, onToolProgress, onStatus, onFileRead, agentMode }) {
   const ollamaUrl = settings?.ollamaUrl || 'http://localhost:11434'
   const useAgent = agentMode !== undefined ? !!agentMode : settings?.agentMode !== false
   const agentCap = Number(settings?.agentToolRounds)
@@ -1652,6 +1658,10 @@ export async function sendToAI({ provider, model, apiKey, messages, signal, onCh
       const result = await executeToolCall(name, typeof argStr === 'string' ? argStr : JSON.stringify(argStr), toolCtx)
       const s = String(result ?? '')
       const bad = s.startsWith('[Error:') || s.startsWith('[Herramienta desconocida')
+      // Registro de lecturas reales (para la guardia "leé antes de parchear")
+      if (!bad && String(name).toLowerCase() === 'readfile' && !/^\[(No disponible|Archivo)/.test(s)) {
+        try { onFileRead?.(readTargetOf(argStr, rootDir)) } catch { /* no crítico */ }
+      }
       onToolProgress?.({ name, detail, phase: 'done', ok: !bad })
       return result
     } catch (e) {
@@ -2238,7 +2248,7 @@ export async function analyzeProjectRelevance({ projectFiles, userQuestion, open
 
 // ── buildMessages: construye el contexto con presupuesto de tokens ────────────
 
-export function buildMessages({ projectFiles, activeFile, activeContent, memories, history, relevantFiles, searchResults, projectSearchResults, devLogs, webPageIntel = null, tokenBudget = 8000, systemPrompt, agentMode = false }) {
+export function buildMessages({ projectFiles, activeFile, activeContent, memories, history, relevantFiles, searchResults, projectSearchResults, devLogs, webPageIntel = null, tokenBudget = 8000, systemPrompt, agentMode = false, projectMeta = null, ctxNotes = null }) {
   const msgs = []
   let usedTokens = 0
 
@@ -2278,7 +2288,9 @@ CAPACIDADES GENERALES:
 - Investigar errores explorando múltiples hipótesis (leer archivos, grep, buscar web, git log)
 - Razonar paso a paso en problemas complejos, directo cuando hay respuesta clara
 - El archivo activo del usuario YA está incluido en tu contexto — no lo pidas
-- El índice del proyecto solo tiene NOMBRES de archivo (sin contenido) — usá readFile para ver el código
+- El índice del proyecto lista rutas, cantidad de líneas y algunos símbolos, pero NO el contenido: usá readFile para ver el código. Puede ser PARCIAL (el aviso al inicio del índice lo dice): que un archivo no figure no significa que no exista; confirmalo con listDir, glob o grep
+- No afirmes nada sobre el contenido de un archivo que no leíste en esta conversación; si no lo viste, leelo primero o decí que no lo verificaste
+- Nunca inventes rutas, funciones ni líneas: citá solo lo que viste en el índice, en el archivo activo o en el resultado de una herramienta
 - Los logs del servidor de desarrollo (salida dev/preview, errores JS) y las capturas \`[UI]\` (clic del usuario sobre un elemento: visibilidad, rect, pointer-events) pueden aparecer en tu contexto — usalos para bugs visuales o de interacción
 - La sección "[Contexto de página web]" incluye HTML/texto visible de la pestaña 🌐 Web o la ventana Preview, más inventario de red si el usuario pulsó 📡 destripe — usala para explicar cómo recrear elementos o integraciones similares
 
@@ -2371,17 +2383,26 @@ REGLAS:
 
   // ── Índice del proyecto ───────────────────────────────────────────────────
   if (projectFiles && Object.keys(projectFiles).length > 0) {
-    const idx  = buildProjectIndex(projectFiles)
-    const toks = estimateTokens(idx)
-    if (usedTokens + toks < tokenBudget) {
-      ctxParts.push(
-        `Índice del proyecto (${Object.keys(projectFiles).length} archivos):\n` +
-        String.fromCharCode(96).repeat(3) + '\n' +
-        idx +
-        '\n' + String.fromCharCode(96).repeat(3)
-      )
-      usedTokens += toks
+    // El índice SIEMPRE se incluye: completo si cabe en ~35% del presupuesto; si no, compacto (solo rutas);
+    // y siempre con el aviso de recorte, para que el modelo no concluya "no existe" por lo que no ve.
+    const nFiles = Object.keys(projectFiles).length + (projectMeta?.extraFiles?.length || 0)
+    const idxCap = Math.floor(tokenBudget * 0.35)
+    let idx = buildProjectIndex(projectFiles)
+    let idxKind = 'completo'
+    if (projectMeta?.extraFiles?.length) {
+      idx += '\n── Sin contenido cargado (solo ruta):\n' + projectMeta.extraFiles.slice(0, 400).map(f => '  ' + f).join('\n')
     }
+    if (estimateTokens(idx) > idxCap) {
+      idx = buildCompactIndex(projectFiles, projectMeta, idxCap)
+      idxKind = 'compacto (solo rutas, por tamaño)'
+    }
+    const notice = indexNotice(projectMeta) + (idxKind !== 'completo' ? ` Índice ${idxKind}: pedí detalle con readFile/grep.` : '')
+    const block =
+      `Índice del proyecto (${nFiles} archivos${notice ? ', PARCIAL' : ''}):\n` +
+      (notice ? `⚠ ${notice}\n` : '') +
+      String.fromCharCode(96).repeat(3) + '\n' + idx + '\n' + String.fromCharCode(96).repeat(3)
+    ctxParts.push(block)
+    usedTokens += estimateTokens(block)
 
     // ── Archivos relevantes adicionales (sí tienen límite de presupuesto) ──
     const toInclude = relevantFiles?.filter(r => r !== activeFile).slice(0, 5) || []
@@ -2434,7 +2455,11 @@ REGLAS:
   }
 
   // ── Contexto del proyecto como system message separado ────────────────────
-  const recentHistory = history.slice(-12)
+  // Historial: se compacta según lo que le queda al presupuesto del modelo (mínimo 25% del total)
+  const histBudget = Math.max(Math.floor(tokenBudget * 0.25), tokenBudget - usedTokens)
+  const compactedHist = compactHistory(history, histBudget)
+  const recentHistory = compactedHist.messages
+  if (ctxNotes && typeof ctxNotes === 'object') ctxNotes.compacted = compactedHist.compacted
 
   if (ctxParts.length > 0) {
     const ctx = ctxParts.join('\n\n')

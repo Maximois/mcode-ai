@@ -10,9 +10,12 @@ contextBridge.exposeInMainWorld('api', {
   delete:         (p)            => ipcRenderer.invoke('fs-delete', p),
   rename:         (from, to)     => ipcRenderer.invoke('fs-rename', { from, to }),
   shellOpen:      (p)            => ipcRenderer.invoke('shell-open', p),
-  projectContext: (rootDir)      => ipcRenderer.invoke('fs-project-context', rootDir),
+  projectContext: (rootDir, opts) => ipcRenderer.invoke('fs-project-context', rootDir, opts),
   toolGrep:       (rootDir, query) => ipcRenderer.invoke('fs-grep', { rootDir, query }),
   toolGlob:       (rootDir, pattern) => ipcRenderer.invoke('fs-glob', { rootDir, pattern }),
+
+  chatLoad:       (rootDir)      => ipcRenderer.invoke('chat-load', rootDir),
+  chatSave:       (rootDir, msgs) => ipcRenderer.invoke('chat-save', rootDir, msgs),
 
   // ── Dialogs ─────────────────────────────────────────────────────────────────
   openFolder:     ()             => ipcRenderer.invoke('dialog-open-folder'),

@@ -36,8 +36,10 @@ const defaults = {
   agentToolRounds: 10,
   /** Con un solo modelo elegido, permitir que otras APIs ayuden (Zen+Gemini, OpenRouter para el indice, Gemini para describir imagenes). Por defecto: solo la API elegida */
   helperApis: false,
-  /** Aplicar al disco PATCH/WRITE/CREATE del asistente sin clic */
-  autoApplyAiPatches: true,
+  /** Freno de mano: 'manual' (por defecto) = los PATCH/WRITE/CREATE esperan tu clic en Aplicar; 'auto' = se aplican solos */
+  patchApplyMode: 'manual',
+  /** Ventana de contexto en tokens (0 = automática según el modelo). El historial se compacta para que quepa */
+  contextTokens: 0,
   /** Ejecutar bloques RUN automáticamente (riesgo: comandos arbitrarios) */
   autoApplyAiRun: false,
   /** Intel proyecto: proceso hijo Node (menos carga en Electron; requiere `node` en PATH) */

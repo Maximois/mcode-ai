@@ -7,6 +7,15 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### 🛡 Agente: contexto fiable y freno de mano
+- Modo de parches **Manual por defecto** (botón ✋ Manual / ⚡ Auto en el chat y opción en Ajustes): los PATCH/WRITE/CREATE y los RUN esperan tu clic en Aplicar. En Auto, un parche sobre un archivo que el agente no leyó en ese turno se rechaza y se le pide leerlo primero (en Manual solo se avisa)
+- Índice del proyecto siempre presente y honesto: avisa cuando es parcial (tope de archivos/tamaño/profundidad), lista los archivos que quedaron sin contenido y pasa a formato compacto si no entra en el presupuesto
+- `searchProject` busca en el disco (todo el proyecto) y no en el mapa recortado en memoria
+- El presupuesto de contexto depende del modelo (ventana estimada, o la que fijes en Ajustes) y el historial se compacta solo, sin gastar tokens: lo viejo se resume y el último pedido queda intacto
+- Historial de chat por proyecto (`<userData>/chats/`, solo texto, hasta 300 mensajes / 4 MB)
+- El prompt del agente exige no afirmar nada de un archivo que no leyó
+- `scripts/test-agent-context.mjs` (38 comprobaciones, enganchado a `npm run verify`)
+
 ### ✨ Added
 - Herramientas locales de cero tokens (botón 🛠 Local del explorador; se desactivan con `localTools: false`). Capa aislada en `electron/local-tools/` y `src/local-tools/` que no reemplaza nada del editor:
   - Validación al guardar y al abrir (JSON, YAML, JS/MJS/CJS) con la línea con error subrayada en el editor
