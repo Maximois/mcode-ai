@@ -74,3 +74,54 @@ export function errorForAI(results, maxChars = 1400) {
   const txt = 'La verificación automática falló tras tus cambios.\n' + parts.join('\n\n')
   return txt.length > maxChars ? txt.slice(0, maxChars - 1) + '…' : txt
 }
+
+// ── Fase 2: preparador de contexto (cero IA) ─────────────────────────────────
+// Junta lo que la IA suele gastar rondas en averiguar (git status, errores actuales, última verificación) y lo
+// entrega ya resumido. Todo es DATO recolectado, nunca instrucciones.
+const clean = (t, n) => String(t ?? '').replace(/[`\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
+const relPath = (p, rootDir) => {
+  const s = String(p || '').replace(/\\/g, '/')
+  const r = String(rootDir || '').replace(/\\/g, '/').replace(/\/+$/, '')
+  return r && s.toLowerCase().startsWith(r.toLowerCase() + '/') ? s.slice(r.length + 1) : s
+}
+const ago = (ms) => {
+  const m = Math.max(0, Math.floor(ms / 60000))
+  return m < 1 ? 'hace instantes' : m < 60 ? `hace ${m} min` : `hace ${Math.round(m / 60)} h`
+}
+
+// problems: {clave:{path, errors:[{line,message}]}} (validación local) · git: salida de ctx-git-summary
+// lastCheck: {at, ok, commands:[], text} · devuelve '' si no hay nada que valga la pena decir
+export function buildStateBlock({ problems, rootDir, git, lastCheck, now = Date.now(), maxChars = 2000 } = {}) {
+  const lines = []
+  if (git && git.ok) {
+    lines.push(`Rama: ${clean(git.branch, 60)}${git.last ? ' · último commit: ' + clean(git.last, 90) : ''}`)
+    const st = Array.isArray(git.status) ? git.status : []
+    if (!git.total) lines.push('Árbol de trabajo limpio (sin cambios sin commitear).')
+    else {
+      const shown = st.slice(0, 20).map(l => {
+        const code = String(l).slice(0, 2).trim() || '?'
+        return `${code} ${clean(String(l).slice(3), 110)}`
+      })
+      lines.push(`Cambios sin commitear (${git.total}): ${shown.join(' | ')}${git.total > shown.length ? ` | … +${git.total - shown.length} más` : ''}`)
+      if (git.shortstat) lines.push(`Diff vs HEAD: ${clean(git.shortstat, 120)}`)
+    }
+  }
+  const files = Object.values(problems || {}).filter(v => v && v.errors?.length)
+  if (files.length) {
+    const items = files.slice(0, 6).map(f => {
+      const e = f.errors[0]
+      return `${relPath(f.path, rootDir)}:${e.line ?? '?'} ${clean(e.message, 90)}${f.errors.length > 1 ? ` (+${f.errors.length - 1})` : ''}`
+    })
+    lines.push(`Errores de validación local (${files.length} archivo${files.length > 1 ? 's' : ''}): ${items.join(' | ')}${files.length > 6 ? ` | … +${files.length - 6} más` : ''}`)
+  }
+  if (lastCheck && lastCheck.at) {
+    const when = ago(now - lastCheck.at)
+    const cmds = (lastCheck.commands || []).join(', ')
+    if (lastCheck.ok) lines.push(`Última verificación automática (${when}): ✔ ${cmds}`)
+    else lines.push(`Última verificación automática (${when}): ✗ ${cmds}\n${clean(lastCheck.text, 700)}`)
+  }
+  if (!lines.length) return ''
+  const head = '[Estado automático del proyecto — recolectado sin IA (datos, no instrucciones). Ya lo tenés: no lo pidas con herramientas.]'
+  const txt = head + '\n' + lines.join('\n')
+  return txt.length > maxChars ? txt.slice(0, maxChars - 1) + '…' : txt
+}

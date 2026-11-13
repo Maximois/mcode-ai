@@ -778,6 +778,33 @@ ipcMain.handle('chat-save', async (_, rootDir, msgs) => {
   } catch (e) { return { ok: false, error: e.message } }
 })
 
+// ── Autopiloto fase 2: resumen de git para el contexto (solo lectura, sin shell, argumentos fijos) ──
+ipcMain.handle('ctx-git-summary', async (_, rootDir) => {
+  try {
+    if (typeof rootDir !== 'string' || !rootDir || !fs.existsSync(rootDir)) return { ok: false }
+    const { execFile } = require('child_process')
+    // GIT_OPTIONAL_LOCKS=0: no toma el lock del índice (no choca con el git del usuario ni con el watcher)
+    const git = (args) => new Promise(res => execFile('git', args, {
+      cwd: rootDir, timeout: 4000, windowsHide: true, maxBuffer: 512 * 1024,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+    }, (e, out) => res(e ? null : String(out))))
+    const branch = await git(['rev-parse', '--abbrev-ref', 'HEAD'])
+    if (branch === null) return { ok: false }
+    const last = await git(['log', '-1', '--format=%h %s'])
+    const status = await git(['status', '--porcelain=v1'])
+    const shortstat = await git(['diff', '--shortstat', 'HEAD'])
+    const lines = (status || '').split(/\r?\n/).filter(Boolean)
+    return {
+      ok: true,
+      branch: branch.trim(),
+      last: (last || '').trim(),
+      total: lines.length,
+      status: lines.slice(0, 60),
+      shortstat: (shortstat || '').trim(),
+    }
+  } catch { return { ok: false } }
+})
+
 // ── Web server ───────────────────────────────────────────────────────────────
 ipcMain.handle('web-server-start', async (_, port) => {
   return startWebServer(port)

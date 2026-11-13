@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
   toolGrep:       (rootDir, query) => ipcRenderer.invoke('fs-grep', { rootDir, query }),
   toolGlob:       (rootDir, pattern) => ipcRenderer.invoke('fs-glob', { rootDir, pattern }),
 
+  ctxGitSummary:  (rootDir)      => ipcRenderer.invoke('ctx-git-summary', rootDir),
   chatLoad:       (rootDir)      => ipcRenderer.invoke('chat-load', rootDir),
   chatSave:       (rootDir, msgs) => ipcRenderer.invoke('chat-save', rootDir, msgs),
 

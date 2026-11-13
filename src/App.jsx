@@ -8,7 +8,7 @@ import {
 } from './ai.js'
 import { useSettings } from './hooks/useSettings.js'
 import { contextWindowFor, promptBudgetFor, findUnreadTargets, normRel } from './agentContext.js'
-import { pickChecks, evaluateCheck, formatReport, errorForAI } from './autopilot.js'
+import { pickChecks, evaluateCheck, formatReport, errorForAI, buildStateBlock } from './autopilot.js'
 import { useTabs, getLang } from './hooks/useTabs.js'
 import { useMemory } from './hooks/useMemory.js'
 import BrowserTab from './BrowserTab.jsx'
@@ -676,7 +676,7 @@ const ChatMsg = memo(function ChatMsg({ msg, onApply, onApplyAll }) {
 
 // ─── Plans Panel (inline in chat) ────────────────────────────────────────────
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab, rootDir, projectFiles, projectIndex, memories, getRelevantMemories, remember, onApplyAction, onApplyAll, chosenModel, setChosenModel, sendRef, devLogs = [], collectWebPageIntel, reportSinkRef }) {
+function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab, rootDir, projectFiles, projectIndex, memories, getRelevantMemories, remember, onApplyAction, onApplyAll, chosenModel, setChosenModel, sendRef, devLogs = [], collectWebPageIntel, reportSinkRef, autoStateRef }) {
   const msgIdCounter = useRef(0)
   const nextMsgId = () => ++msgIdCounter.current
   const [msgs, setMsgs]       = useState([{ role:'assistant', content:'Hola! Soy **MCodeAI Pre**. Abrí un proyecto o archivo y preguntame lo que necesités.', _id: 'welcome' }])
@@ -925,6 +925,18 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
       }
 
       const ctxNotes = { compacted: 0 }
+      const promptBudget = promptBudgetFor(contextWindowFor(activeProv, activeModel, settings.contextTokens))
+      // Autopiloto fase 2: estado del proyecto recolectado sin IA (git, errores actuales, última verificación)
+      let stateBlock = ''
+      if (settings.autopilotContext !== false && rootDir) {
+        try {
+          const git = window.api?.ctxGitSummary ? await window.api.ctxGitSummary(rootDir).catch(() => null) : null
+          stateBlock = buildStateBlock({
+            problems: autoStateRef?.current?.problems, rootDir, git, lastCheck: autoStateRef?.current?.lastCheck,
+            maxChars: Math.max(800, Math.min(2400, Math.floor(promptBudget * 4 * 0.06))),
+          })
+        } catch (e) { console.warn('[AUTOPILOT-CTX]', e) }
+      }
       const baseMessages = buildMessages({
         projectFiles:         freshFiles,
         activeFile:           activeTab?.filePath || activeTab?.name,
@@ -936,10 +948,11 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
         projectSearchResults: localProjectSearch,
         devLogs,
         webPageIntel,
-        tokenBudget:          promptBudgetFor(contextWindowFor(activeProv, activeModel, settings.contextTokens)),
+        tokenBudget:          promptBudget,
         agentMode:            agentModeEffective,
         projectMeta,
         ctxNotes,
+        stateBlock,
       })
       if (ctxNotes.compacted > 0) setWorkText(`Historial compactado (${ctxNotes.compacted} mensajes viejos resumidos)`)
 
@@ -1594,6 +1607,11 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
               <input type="checkbox" checked={settings.autopilotChecks !== false}
                 onChange={e => updateSettings({ autopilotChecks: e.target.checked })} />
               <span>Autopiloto: verificar solo tras aplicar cambios (corre "verify" o, si no hay, "test" y "lint" del package.json)</span>
+            </label>
+            <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+              <input type="checkbox" checked={settings.autopilotContext !== false}
+                onChange={e => updateSettings({ autopilotContext: e.target.checked })} />
+              <span>Autopiloto: adjuntar a cada pregunta el estado del proyecto (git, errores actuales, última verificación) sin gastar herramientas</span>
             </label>
             <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
               <input type="checkbox" checked={!!settings.autoApplyAiRun}
@@ -2595,6 +2613,9 @@ function App() {
   // package.json decide qué correr: "verify" (si existe) o, si no, "test" y "lint". Una cosa a la vez (poca RAM);
   // se frena en el primer fallo. Devuelve un resumen CORTO del fallo para la IA ('' si todo pasó o no corresponde).
   const reportSinkRef = useRef(null)   // lo completa ChatPanel: agrega la tarjeta de resultado al chat
+  // Fuentes del "estado automático" que se adjunta a cada pregunta (errores actuales + última verificación)
+  const autoStateRef = useRef({ problems: {}, lastCheck: null })
+  autoStateRef.current.problems = localProblems
   const runAutopilotChecks = useCallback(async (actions) => {
     if (!rootDir || !window.api || settings.autopilotChecks === false) return ''
     const touchedCode = (actions || []).some(a => a.type !== 'RUN' && a.type !== 'READ' && /\.(jsx?|tsx?|mjs|cjs|py)$/i.test(a.filePath || ''))
@@ -2623,7 +2644,9 @@ function App() {
         }
       }
       reportSinkRef.current?.(formatReport(results, skipped))
-      return errorForAI(results)
+      const failMsg = errorForAI(results)
+      autoStateRef.current.lastCheck = { at: Date.now(), ok: !failMsg, commands: results.map(r => r.command), text: failMsg }
+      return failMsg
     } catch (e) {
       console.warn('[AUTOPILOT]', e)
       return ''
@@ -3296,6 +3319,7 @@ function App() {
             remember={remember}
             onApplyAction={applyAction}
             reportSinkRef={reportSinkRef}
+            autoStateRef={autoStateRef}
             onApplyAll={applyAll}
             chosenModel={chosenModel}
             setChosenModel={setChosenModel}

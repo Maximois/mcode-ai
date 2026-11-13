@@ -13,6 +13,12 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 - Opción en Ajustes para apagarlo; `run-command` acepta `timeoutMs` opcional y avisa `timedOut`
 - `scripts/test-autopilot.mjs` (27 comprobaciones, enganchado a `npm run verify`)
 
+### 🤖 Autopiloto (fase 2): preparador de contexto
+- Cada pregunta al agente lleva un bloque "Estado automático del proyecto" recolectado sin IA: rama y último commit, cambios sin commitear (con su código y el diff resumido), errores de validación local actuales y el resultado de la última verificación. Así el agente no gasta rondas de herramientas en averiguarlo
+- Git se consulta con una lectura segura (`ctx-git-summary`: sin shell, argumentos fijos, sin tomar locks, 4 s de tope); si no hay git o no es un repo, el bloque simplemente se omite
+- Los textos de commits y archivos se neutralizan (son datos, no instrucciones) y el bloque tiene tope de tamaño según el presupuesto del modelo
+- Opción en Ajustes para apagarlo; 11 comprobaciones nuevas en `scripts/test-autopilot.mjs`
+
 ### 🛡 Agente: contexto fiable y freno de mano
 - Modo de parches **Manual por defecto** (botón ✋ Manual / ⚡ Auto en el chat y opción en Ajustes): los PATCH/WRITE/CREATE y los RUN esperan tu clic en Aplicar. En Auto, un parche sobre un archivo que el agente no leyó en ese turno se rechaza y se le pide leerlo primero (en Manual solo se avisa)
 - Índice del proyecto siempre presente y honesto: avisa cuando es parcial (tope de archivos/tamaño/profundidad), lista los archivos que quedaron sin contenido y pasa a formato compacto si no entra en el presupuesto

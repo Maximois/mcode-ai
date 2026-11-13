@@ -2248,7 +2248,7 @@ export async function analyzeProjectRelevance({ projectFiles, userQuestion, open
 
 // ── buildMessages: construye el contexto con presupuesto de tokens ────────────
 
-export function buildMessages({ projectFiles, activeFile, activeContent, memories, history, relevantFiles, searchResults, projectSearchResults, devLogs, webPageIntel = null, tokenBudget = 8000, systemPrompt, agentMode = false, projectMeta = null, ctxNotes = null }) {
+export function buildMessages({ projectFiles, activeFile, activeContent, memories, history, relevantFiles, searchResults, projectSearchResults, devLogs, webPageIntel = null, tokenBudget = 8000, systemPrompt, agentMode = false, projectMeta = null, ctxNotes = null, stateBlock = '' }) {
   const msgs = []
   let usedTokens = 0
 
@@ -2289,6 +2289,7 @@ CAPACIDADES GENERALES:
 - Razonar paso a paso en problemas complejos, directo cuando hay respuesta clara
 - El archivo activo del usuario YA está incluido en tu contexto — no lo pidas
 - El índice del proyecto lista rutas, cantidad de líneas y algunos símbolos, pero NO el contenido: usá readFile para ver el código. Puede ser PARCIAL (el aviso al inicio del índice lo dice): que un archivo no figure no significa que no exista; confirmalo con listDir, glob o grep
+- Si aparece "[Estado automático del proyecto]", ya trae rama, cambios sin commitear, errores de validación y la última verificación: no gastes herramientas en pedir esos datos otra vez
 - No afirmes nada sobre el contenido de un archivo que no leíste en esta conversación; si no lo viste, leelo primero o decí que no lo verificaste
 - Nunca inventes rutas, funciones ni líneas: citá solo lo que viste en el índice, en el archivo activo o en el resultado de una herramienta
 - Los logs del servidor de desarrollo (salida dev/preview, errores JS) y las capturas \`[UI]\` (clic del usuario sobre un elemento: visibilidad, rect, pointer-events) pueden aparecer en tu contexto — usalos para bugs visuales o de interacción
@@ -2379,6 +2380,12 @@ REGLAS:
       '\n' + String.fromCharCode(96).repeat(3)
     )
     usedTokens += estimateTokens(numbered)
+  }
+
+  // ── Estado automático (git, errores actuales, última verificación): lo junta el editor sin IA ──
+  if (stateBlock) {
+    ctxParts.push(stateBlock)
+    usedTokens += estimateTokens(stateBlock)
   }
 
   // ── Índice del proyecto ───────────────────────────────────────────────────
