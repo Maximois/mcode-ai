@@ -9,6 +9,7 @@ import {
 import { useSettings } from './hooks/useSettings.js'
 import { contextWindowFor, promptBudgetFor, findUnreadTargets, normRel } from './agentContext.js'
 import { pickChecks, evaluateCheck, formatReport, errorForAI, buildStateBlock } from './autopilot.js'
+import { PROBE_NAMES, recommendGitignore, detectFormatter, buildCheckup, formatGitignoreResult, formatFormatResult } from './projectCheckup.js'
 import { matchIntent, helpText, formatGitStatus, formatErrors, formatSecrets, formatSnapshot, formatJunk, formatUndo, LOCAL_TAG } from './localAssistant.js'
 import { useTabs, getLang } from './hooks/useTabs.js'
 import { useMemory } from './hooks/useMemory.js'
@@ -831,7 +832,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
     setBusy(true)
     try {
       const lt = window.api.localTools
-      const needLt = ['secrets', 'snapshot', 'junk'].includes(intent)
+      const needLt = ['secrets', 'snapshot', 'junk', 'gitignore'].includes(intent)
       if (needLt && !lt) { reply(`${LOCAL_TAG}\nLas herramientas locales no están disponibles en esta versión.`); return }
       if (intent === 'help') reply(helpText())
       else if (intent === 'status') reply(formatGitStatus(await window.api.ctxGitSummary?.(rootDir).catch(() => null)))
@@ -839,6 +840,19 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
       else if (intent === 'secrets') reply(formatSecrets(await lt.secretsScan(rootDir).catch(e => ({ ok: false, error: e.message }))))
       else if (intent === 'snapshot') reply(formatSnapshot(await lt.snapCreate(rootDir, 'asistente local').catch(e => ({ ok: false, error: e.message }))))
       else if (intent === 'junk') reply(formatJunk(await lt.cleanScan(rootDir, []).catch(e => ({ ok: false, error: e.message }))))
+      else if (intent === 'suggest') {
+        const facts = await localOps.facts()
+        const secrets = lt ? await lt.secretsScan(rootDir).catch(() => null) : null
+        const junk = lt ? await lt.cleanScan(rootDir, []).catch(() => null) : null
+        const git = await window.api.ctxGitSummary?.(rootDir).catch(() => null)
+        reply(buildCheckup({ recs: facts.recs, gitignoreExists: facts.gitignoreExists, secrets, junk, pkg: facts.pkg, formatter: facts.formatter, git }))
+      }
+      else if (intent === 'gitignore') {
+        const { recs } = await localOps.facts()
+        const res = recs.length ? await lt.gitignoreAdd(rootDir, recs.map(r => r.rule)).catch(e => ({ ok: false, error: e.message })) : null
+        reply(formatGitignoreResult(recs, res))
+      }
+      else if (intent === 'format') reply(await localOps.format())
       else if (intent === 'tests') await localOps?.runChecks?.()          // la tarjeta de resultado la agrega el autopiloto
       else if (intent === 'undo') {
         const r = await localOps?.undoLast?.()
@@ -2696,6 +2710,37 @@ function App() {
     }
   }, [rootDir, settings.autopilotChecks])
 
+  // Autopiloto fase 4: datos del proyecto para las rutinas mecánicas (solo lectura)
+  const collectProjectFacts = useCallback(async () => {
+    const root = rootDir.replace(/\\/g, '/').replace(/\/$/, '')
+    const pk = await window.api.readFile(root + '/package.json')
+    let pkg = null
+    try { pkg = pk.ok ? JSON.parse(pk.content || '{}') : null } catch { pkg = null }
+    const present = []
+    for (const name of PROBE_NAMES) { try { if (await window.api.exists(root + '/' + name)) present.push(name) } catch { /* se ignora */ } }
+    const gi = await window.api.localTools?.gitignoreRead(rootDir).catch(() => null)
+    const rules = gi?.ok ? gi.rules : []
+    return { pkg, present, rules, gitignoreExists: !!gi?.exists, recs: recommendGitignore({ rules, present, pkg }), formatter: detectFormatter(pkg) }
+  }, [rootDir])
+
+  // Formatear con el formateador del proyecto (script "format" o prettier ya instalado): snapshot ANTES, y si falla no se toca nada
+  const runFormat = useCallback(async () => {
+    const facts = await collectProjectFacts()
+    if (!facts.formatter) return formatFormatResult({ formatter: null })
+    const lt = window.api.localTools
+    const snap = lt ? await lt.snapCreate(rootDir, 'antes de formatear').catch(e => ({ ok: false, error: e.message })) : { ok: false, error: 'las herramientas locales no están disponibles' }
+    if (!snap || snap.ok === false) return formatFormatResult({ formatter: facts.formatter, snapshot: snap || { ok: false } })
+    const stamp = () => new Date().toLocaleTimeString()
+    setShowTerminal(true)
+    setTermLines(p => [...p, { type: 'info', text: `${stamp()} ✨ Formateando: ${facts.formatter.command}…` }])
+    const r = await window.api.runCommand({ command: facts.formatter.command, cwd: rootDir, timeoutMs: 180000 })
+    const ev = evaluateCheck({ name: 'format', command: facts.formatter.command, code: r.code, out: r.out, err: r.err, ms: 0, timedOut: r.timedOut })
+    setTermLines(p => [...p, { type: ev.ok ? 'out' : 'err', text: `${stamp()} ${ev.ok ? '✔ Formateado' : '✗ El formateo falló:\n' + ev.summary.join('\n')}` }])
+    markCodeChanged()
+    const git = ev.ok ? await window.api.ctxGitSummary?.(rootDir).catch(() => null) : null
+    return formatFormatResult({ formatter: facts.formatter, snapshot: snap, ok: ev.ok, timedOut: ev.timedOut, summary: ev.summary, git })
+  }, [rootDir, collectProjectFacts, markCodeChanged])
+
   // Asistente local: deshacer el último cambio aplicado por el editor (usa la misma pila de deshacer que la herramienta `undo`)
   const undoLastChange = useCallback(async () => {
     const entry = undoHistory[0]
@@ -3377,7 +3422,7 @@ function App() {
             onApplyAction={applyAction}
             reportSinkRef={reportSinkRef}
             autoStateRef={autoStateRef}
-            localOps={{ runChecks: () => runAutopilotChecks([], { force: true }), undoLast: undoLastChange }}
+            localOps={{ runChecks: () => runAutopilotChecks([], { force: true }), undoLast: undoLastChange, facts: collectProjectFacts, format: runFormat }}
             onApplyAll={applyAll}
             chosenModel={chosenModel}
             setChosenModel={setChosenModel}

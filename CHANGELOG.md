@@ -24,6 +24,12 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 - Reconocimiento deliberadamente estrecho: el mensaje completo tiene que ser el comando; si trae algo más ("corré los tests y arreglá lo que falle", "qué cambió en ai.js") va a la IA
 - Opción en Ajustes para apagarlo; `scripts/test-local-assistant.mjs` (125 comprobaciones, incluye ~50 mensajes que NO deben interceptarse)
 
+### 🤖 Autopiloto (fase 4): rutinas mecánicas y sugerencias
+- "sugerencias" (o "chequeo"): revisión de solo lectura que lista lo que se puede resolver con un pedido corto: entradas que faltan en `.gitignore`, secretos, basura regenerable, proyecto sin `verify`/`test`/`lint`, formateador disponible, muchos cambios sin commitear o carpeta sin git
+- "arreglá el gitignore": agrega solo las reglas que faltan (node_modules, carpetas de build y `.env` que existen, caché de Python, carpetas de editor). Solo agrega líneas, respeta lo que ya había (CRLF, comodines, rutas con o sin barra) y es idempotente; nunca recomienda ignorar el lockfile
+- "formateá el proyecto": usa el script `format` o prettier ya instalado (nunca descarga nada), hace un snapshot ANTES y si el snapshot falla no toca nada; informa qué cambió
+- `scripts/test-project-checkup.mjs` (48 comprobaciones) y 29 casos nuevos en el asistente local, enganchados a `npm run verify`
+
 ### 🛡 Agente: contexto fiable y freno de mano
 - Modo de parches **Manual por defecto** (botón ✋ Manual / ⚡ Auto en el chat y opción en Ajustes): los PATCH/WRITE/CREATE y los RUN esperan tu clic en Aplicar. En Auto, un parche sobre un archivo que el agente no leyó en ese turno se rechaza y se le pide leerlo primero (en Manual solo se avisa)
 - Índice del proyecto siempre presente y honesto: avisa cuando es parcial (tope de archivos/tamaño/profundidad), lista los archivos que quedaron sin contenido y pasa a formato compacto si no entra en el presupuesto

@@ -13,6 +13,9 @@ export const INTENT_LABELS = {
   snapshot: 'Crear un snapshot (punto de restauración)',
   undo: 'Deshacer el último cambio aplicado por el editor',
   junk: 'Ver qué basura regenerable hay (solo muestra, no borra)',
+  suggest: 'Chequeo del proyecto: qué se puede mejorar de forma mecánica',
+  gitignore: 'Completar el .gitignore con lo que falta (solo agrega líneas)',
+  format: 'Formatear el proyecto con su formateador (con snapshot previo)',
   help: 'Mostrar esta ayuda',
 }
 
@@ -42,6 +45,11 @@ const RULES = [
   ['snapshot', /^(?:hace|hacer|crea|crear|guarda|guardar|genera|generar|toma|tomar|saca|sacar)\s+(?:un |una )?(?:snapshot|backup|respaldo|punto de restauracion|punto de control|copia de seguridad)(?:\s+(?:ahora|del proyecto))?$/],
   ['undo', /^(?:deshace|deshacer|reverti|revierte|revertir|volve atras|vuelve atras|undo)(?:\s+(?:el |lo )?(?:ultimo |ultima )?(?:cambio|parche|edicion|modificacion))?$/],
   ['junk', /^(?:que basura hay|hay basura|busca basura|buscar basura|que se puede limpiar|que archivos basura hay)$/],
+  ['suggest', /^(?:sugerencias(?: automaticas)?|diagnostico(?: del proyecto)?|chequeo(?: del proyecto)?|checkup|que mejoras automaticas hay)$/],
+  ['gitignore', /^(?:arregla|arreglar|completa|completar|actualiza|actualizar|ordena|ordenar)\s+(?:el |mi )?gitignore$/],
+  ['gitignore', /^(?:agrega|agregar|suma|sumar)\s+(?:lo que falta|los faltantes|lo faltante)\s+(?:al|en el)\s+gitignore$/],
+  ['format', /^(?:formatea|formatear|formateame)(?:\s+(?:el\s+)?(?:proyecto|codigo|todo))?$/],
+  ['format', /^(?:corre|correr|ejecuta|ejecutar)\s+(?:prettier|el formateador)$/],
   ['help', /^(?:ayuda|ayuda del asistente|comandos|comandos locales|asistente local|que podes hacer sin ia|que sabes hacer sin ia)$/],
 ]
 
@@ -69,7 +77,7 @@ export const LOCAL_TAG = '⚙ *Asistente local (sin IA)*'
 export function helpText() {
   const ex = {
     tests: '"corré los tests"', status: '"qué cambió"', errors: '"qué errores hay"', secrets: '"buscá secretos"',
-    snapshot: '"hacé un snapshot"', undo: '"deshacé el último cambio"', junk: '"qué basura hay"', help: '"ayuda"',
+    snapshot: '"hacé un snapshot"', suggest: '"sugerencias"', gitignore: '"arreglá el gitignore"', format: '"formateá el proyecto"', undo: '"deshacé el último cambio"', junk: '"qué basura hay"', help: '"ayuda"',
   }
   return `${LOCAL_TAG}\nPuedo resolver sin IA (y sin gastar tokens) estos pedidos cuando el mensaje es solo eso:\n` +
     Object.entries(INTENT_LABELS).map(([k, v]) => `- ${v} — ${ex[k]}`).join('\n') +

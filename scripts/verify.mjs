@@ -74,6 +74,14 @@ console.log('[1f] Asistente local (reconocimiento de pedidos y respuestas)')
   else console.log((r.stdout || '').trimEnd())
 }
 
+// 1g) Rutinas mecanicas (src/projectCheckup.js): .gitignore faltante, formateador y chequeo del proyecto
+console.log('[1g] Rutinas mecanicas (gitignore, formateador, chequeo)')
+{
+  const r = spawnSync(process.execPath, ['--no-warnings', join(root, 'scripts', 'test-project-checkup.mjs')], { encoding: 'utf8' })
+  if (r.status !== 0) { failed++; console.error((r.stderr || r.stdout || '').trim().split('\n').slice(-20).join('\n')) }
+  else console.log((r.stdout || '').trimEnd())
+}
+
 // 2) Build real del renderer (detecta errores de JSX, imports rotos, etc.)
 if (quick) {
   console.log('[2/2] Build de vite: omitido (--quick)')
