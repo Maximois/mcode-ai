@@ -9,6 +9,7 @@ import {
 import { useSettings } from './hooks/useSettings.js'
 import { contextWindowFor, promptBudgetFor, findUnreadTargets, normRel } from './agentContext.js'
 import { pickChecks, evaluateCheck, formatReport, errorForAI, buildStateBlock } from './autopilot.js'
+import { matchIntent, helpText, formatGitStatus, formatErrors, formatSecrets, formatSnapshot, formatJunk, formatUndo, LOCAL_TAG } from './localAssistant.js'
 import { useTabs, getLang } from './hooks/useTabs.js'
 import { useMemory } from './hooks/useMemory.js'
 import BrowserTab from './BrowserTab.jsx'
@@ -676,7 +677,7 @@ const ChatMsg = memo(function ChatMsg({ msg, onApply, onApplyAll }) {
 
 // ─── Plans Panel (inline in chat) ────────────────────────────────────────────
 // ─── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab, rootDir, projectFiles, projectIndex, memories, getRelevantMemories, remember, onApplyAction, onApplyAll, chosenModel, setChosenModel, sendRef, devLogs = [], collectWebPageIntel, reportSinkRef, autoStateRef }) {
+function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab, rootDir, projectFiles, projectIndex, memories, getRelevantMemories, remember, onApplyAction, onApplyAll, chosenModel, setChosenModel, sendRef, devLogs = [], collectWebPageIntel, reportSinkRef, autoStateRef, localOps }) {
   const msgIdCounter = useRef(0)
   const nextMsgId = () => ++msgIdCounter.current
   const [msgs, setMsgs]       = useState([{ role:'assistant', content:'Hola! Soy **MCodeAI Pre**. Abrí un proyecto o archivo y preguntame lo que necesités.', _id: 'welcome' }])
@@ -823,10 +824,42 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
   const apiKey    = settings.apiKeys?.[prov] || null
   const model     = settings.models?.[prov]  || PROVIDERS[prov]?.defaultModel || ''
 
+  const runLocalIntent = async (intent, text) => {
+    const reply = (content) => setMsgs(p => [...p, { role:'assistant', content, local: true, _id: nextMsgId() }])
+    setMsgs(p => [...p, { role:'user', content: text, local: true, _id: nextMsgId() }])
+    setInput('')
+    setBusy(true)
+    try {
+      const lt = window.api.localTools
+      const needLt = ['secrets', 'snapshot', 'junk'].includes(intent)
+      if (needLt && !lt) { reply(`${LOCAL_TAG}\nLas herramientas locales no están disponibles en esta versión.`); return }
+      if (intent === 'help') reply(helpText())
+      else if (intent === 'status') reply(formatGitStatus(await window.api.ctxGitSummary?.(rootDir).catch(() => null)))
+      else if (intent === 'errors') reply(formatErrors(autoStateRef?.current?.problems, rootDir))
+      else if (intent === 'secrets') reply(formatSecrets(await lt.secretsScan(rootDir).catch(e => ({ ok: false, error: e.message }))))
+      else if (intent === 'snapshot') reply(formatSnapshot(await lt.snapCreate(rootDir, 'asistente local').catch(e => ({ ok: false, error: e.message }))))
+      else if (intent === 'junk') reply(formatJunk(await lt.cleanScan(rootDir, []).catch(e => ({ ok: false, error: e.message }))))
+      else if (intent === 'tests') await localOps?.runChecks?.()          // la tarjeta de resultado la agrega el autopiloto
+      else if (intent === 'undo') {
+        const r = await localOps?.undoLast?.()
+        reply(r?.error ? `${LOCAL_TAG}\n✗ ${r.error}` : formatUndo(r?.entry || null))
+      }
+    } catch (e) {
+      reply(`${LOCAL_TAG}\n✗ Falló: ${e?.message || e}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const send = async (text, sendOpts = {}) => {
     if ((!text.trim() && !image) || busy) return
     // El tope de 20 auto-reparaciones es por pedido del usuario, no de por vida de la app
     if (!sendOpts.auto) autoFixCount.current = 0
+    // Autopiloto fase 3: pedidos obvios de una sola acción se resuelven acá, sin IA (el reconocimiento es muy estrecho)
+    if (!sendOpts.auto && !image && settings.localAssistant !== false && rootDir && window.api) {
+      const intent = matchIntent(text)
+      if (intent) { await runLocalIntent(intent, text.trim()); return }
+    }
     const imageData = image
     let userContent = text.trim() || (image ? '¿Qué ves en esta imagen?' : '')
     let displayImage = imageData?.preview
@@ -1612,6 +1645,11 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
               <input type="checkbox" checked={settings.autopilotContext !== false}
                 onChange={e => updateSettings({ autopilotContext: e.target.checked })} />
               <span>Autopiloto: adjuntar a cada pregunta el estado del proyecto (git, errores actuales, última verificación) sin gastar herramientas</span>
+            </label>
+            <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+              <input type="checkbox" checked={settings.localAssistant !== false}
+                onChange={e => updateSettings({ localAssistant: e.target.checked })} />
+              <span>Asistente local: resolver sin IA pedidos obvios ("corré los tests", "qué cambió", "deshacé el último cambio"…). Escribí "ayuda" para ver la lista</span>
             </label>
             <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
               <input type="checkbox" checked={!!settings.autoApplyAiRun}
@@ -2616,16 +2654,21 @@ function App() {
   // Fuentes del "estado automático" que se adjunta a cada pregunta (errores actuales + última verificación)
   const autoStateRef = useRef({ problems: {}, lastCheck: null })
   autoStateRef.current.problems = localProblems
-  const runAutopilotChecks = useCallback(async (actions) => {
-    if (!rootDir || !window.api || settings.autopilotChecks === false) return ''
+  const runAutopilotChecks = useCallback(async (actions, opts = {}) => {
+    // opts.force: pedido explícito del usuario ("corré los tests"): ignora el ajuste y no exige haber tocado código
+    if (!rootDir || !window.api) return ''
+    if (!opts.force && settings.autopilotChecks === false) return ''
     const touchedCode = (actions || []).some(a => a.type !== 'RUN' && a.type !== 'READ' && /\.(jsx?|tsx?|mjs|cjs|py)$/i.test(a.filePath || ''))
-    if (!touchedCode) return ''
+    if (!opts.force && !touchedCode) return ''
     try {
       const root = rootDir.replace(/\\/g, '/').replace(/\/$/, '')
       const pk = await window.api.readFile(root + '/package.json')
       const scripts = pk.ok ? (JSON.parse(pk.content || '{}')?.scripts || {}) : {}
       const checks = pickChecks(scripts)
-      if (!checks.length) return ''
+      if (!checks.length) {
+        if (opts.force) reportSinkRef.current?.('ℹ️ Este proyecto no define scripts `verify`, `test` ni `lint` en su `package.json`: no hay nada que correr.')
+        return ''
+      }
       setShowTerminal(true)
       const stamp = () => new Date().toLocaleTimeString()
       const results = [], skipped = []
@@ -2652,6 +2695,20 @@ function App() {
       return ''
     }
   }, [rootDir, settings.autopilotChecks])
+
+  // Asistente local: deshacer el último cambio aplicado por el editor (usa la misma pila de deshacer que la herramienta `undo`)
+  const undoLastChange = useCallback(async () => {
+    const entry = undoHistory[0]
+    if (!entry || !window.api) return { entry: null }
+    const w = await window.api.writeFile({ p: entry.filePath, content: entry.originalContent })
+    if (w && w.ok === false) return { error: `No pude restaurar ${entry.filePath}: ${w.error || 'error desconocido'}` }
+    undoHistory.shift()
+    const fp = String(entry.filePath).replace(/\\/g, '/').toLowerCase()
+    const tab = tabs.find(t => t.filePath && t.filePath.replace(/\\/g, '/').toLowerCase() === fp)
+    if (tab) updateContent(tab.id, entry.originalContent)
+    markCodeChanged()
+    return { entry }
+  }, [tabs, updateContent, markCodeChanged])
 
   // Apply user/assistant actions directly without extra file preview
   const applyAction = useCallback(async (action) => {
@@ -3320,6 +3377,7 @@ function App() {
             onApplyAction={applyAction}
             reportSinkRef={reportSinkRef}
             autoStateRef={autoStateRef}
+            localOps={{ runChecks: () => runAutopilotChecks([], { force: true }), undoLast: undoLastChange }}
             onApplyAll={applyAll}
             chosenModel={chosenModel}
             setChosenModel={setChosenModel}

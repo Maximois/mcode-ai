@@ -19,6 +19,11 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 - Los textos de commits y archivos se neutralizan (son datos, no instrucciones) y el bloque tiene tope de tamaño según el presupuesto del modelo
 - Opción en Ajustes para apagarlo; 11 comprobaciones nuevas en `scripts/test-autopilot.mjs`
 
+### 🤖 Autopiloto (fase 3): asistente de comandos locales
+- Pedidos obvios de una sola acción se resuelven sin IA ni tokens (respuesta marcada "Asistente local (sin IA)"): "corré los tests" (verify, o test y lint), "qué cambió" (git), "qué errores hay", "buscá secretos" (valores enmascarados), "hacé un snapshot", "deshacé el último cambio" y "qué basura hay" (solo muestra, no borra). "ayuda" lista todo
+- Reconocimiento deliberadamente estrecho: el mensaje completo tiene que ser el comando; si trae algo más ("corré los tests y arreglá lo que falle", "qué cambió en ai.js") va a la IA
+- Opción en Ajustes para apagarlo; `scripts/test-local-assistant.mjs` (125 comprobaciones, incluye ~50 mensajes que NO deben interceptarse)
+
 ### 🛡 Agente: contexto fiable y freno de mano
 - Modo de parches **Manual por defecto** (botón ✋ Manual / ⚡ Auto en el chat y opción en Ajustes): los PATCH/WRITE/CREATE y los RUN esperan tu clic en Aplicar. En Auto, un parche sobre un archivo que el agente no leyó en ese turno se rechaza y se le pide leerlo primero (en Manual solo se avisa)
 - Índice del proyecto siempre presente y honesto: avisa cuando es parcial (tope de archivos/tamaño/profundidad), lista los archivos que quedaron sin contenido y pasa a formato compacto si no entra en el presupuesto

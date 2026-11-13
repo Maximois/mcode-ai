@@ -66,6 +66,14 @@ console.log('[1e] Autopiloto (cadena de verificacion y resumen de fallos)')
   else console.log((r.stdout || '').trimEnd())
 }
 
+// 1f) Asistente local (src/localAssistant.js): reconoce pedidos obvios y NO intercepta lo que necesita IA
+console.log('[1f] Asistente local (reconocimiento de pedidos y respuestas)')
+{
+  const r = spawnSync(process.execPath, ['--no-warnings', join(root, 'scripts', 'test-local-assistant.mjs')], { encoding: 'utf8' })
+  if (r.status !== 0) { failed++; console.error((r.stderr || r.stdout || '').trim().split('\n').slice(-20).join('\n')) }
+  else console.log((r.stdout || '').trimEnd())
+}
+
 // 2) Build real del renderer (detecta errores de JSX, imports rotos, etc.)
 if (quick) {
   console.log('[2/2] Build de vite: omitido (--quick)')

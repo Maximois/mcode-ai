@@ -42,6 +42,8 @@ const defaults = {
   autopilotChecks: true,
   /** Autopiloto fase 2: adjuntar a cada pregunta git/errores/última verificación (recolectado sin IA) */
   autopilotContext: true,
+  /** Autopiloto fase 3: resolver sin IA pedidos obvios de una sola acción (tests, estado, errores, secretos, snapshot, deshacer) */
+  localAssistant: true,
   /** Ventana de contexto en tokens (0 = automática según el modelo). El historial se compacta para que quepa */
   contextTokens: 0,
   /** Ejecutar bloques RUN automáticamente (riesgo: comandos arbitrarios) */
