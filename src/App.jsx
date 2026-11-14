@@ -8,6 +8,7 @@ import {
 } from './ai.js'
 import { useSettings } from './hooks/useSettings.js'
 import { contextWindowFor, promptBudgetFor, findUnreadTargets, normRel } from './agentContext.js'
+import { focusProject, focusBlock as buildFocusBlock, mergeRelevant, describeFocus } from './focus.js'
 import { pickChecks, evaluateCheck, formatReport, errorForAI, buildStateBlock } from './autopilot.js'
 import { projectKey, loadState, emptyState, recordCommand, suggestionFor, acceptCommand, dismissCommand, acceptedChecks, forgetProject, formatSuggestion, describeHabits, formatAccept, formatDismiss, formatForget, NO_PENDING } from './habits.js'
 import { PROBE_NAMES, recommendGitignore, detectFormatter, buildCheckup, formatGitignoreResult, formatFormatResult } from './projectCheckup.js'
@@ -902,9 +903,16 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
       // Con un solo modelo elegido NO se consulta OpenRouter por su cuenta (salvo "APIs auxiliares" activadas)
       const needsRelev  = !!(helperApisEnabled(settings) && freshFiles && settings.apiKeys?.openrouter && Object.keys(freshFiles || {}).length > 3)
 
-      const localRelevantFiles = freshFiles
+      const baseRelevantFiles = freshFiles
         ? selectRelevantFiles(freshFiles, lastQ, activeTab?.filePath || activeTab?.name, 5)
         : null
+      // Enfocador local (fase A del superasistente): elige archivos/líneas por intención, sin gastar tokens
+      let focusInfo = null
+      if (settings.localFocus !== false && freshFiles) {
+        try { focusInfo = focusProject({ query: lastQ, files: freshFiles, activeFile: activeTab?.filePath || activeTab?.name }) }
+        catch (e) { console.warn('[FOCUS]', e) }
+      }
+      const localRelevantFiles = focusInfo ? mergeRelevant(focusInfo, baseRelevantFiles, { max: 5 }) : baseRelevantFiles
 
       const localProjectSearch = freshFiles
         ? searchProjectFiles(freshFiles, lastQ, 5, 3)
@@ -1002,7 +1010,9 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
         projectMeta,
         ctxNotes,
         stateBlock,
+        focusBlock: focusInfo ? buildFocusBlock(focusInfo) : '',
       })
+      if (focusInfo && (focusInfo.confidence === 'alta' || focusInfo.confidence === 'media')) setWorkText(describeFocus(focusInfo, 2))
       if (ctxNotes.compacted > 0) setWorkText(`Historial compactado (${ctxNotes.compacted} mensajes viejos resumidos)`)
 
       // Stream response
@@ -1666,6 +1676,11 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
               <input type="checkbox" checked={settings.localAssistant !== false}
                 onChange={e => updateSettings({ localAssistant: e.target.checked })} />
               <span>Asistente local: resolver sin IA pedidos obvios ("corré los tests", "qué cambió", "deshacé el último cambio"…). Escribí "ayuda" para ver la lista</span>
+            </label>
+            <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+              <input type="checkbox" checked={settings.localFocus !== false}
+                onChange={e => updateSettings({ localFocus: e.target.checked })} />
+              <span>Enfocador local: elegir sin IA qué archivos y líneas importan para tu pedido y pasárselos a la IA como pista (ahorra exploración y tokens)</span>
             </label>
             <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
               <input type="checkbox" checked={settings.autopilotLearn !== false}

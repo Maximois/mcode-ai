@@ -44,6 +44,8 @@ const defaults = {
   autopilotContext: true,
   /** Autopiloto fase 3: resolver sin IA pedidos obvios de una sola acción (tests, estado, errores, secretos, snapshot, deshacer) */
   localAssistant: true,
+  /** Enfocador local: elige sin IA qué archivos y líneas importan para el pedido (sinónimos es/en, símbolos) y se los pasa a la IA como pista */
+  localFocus: true,
   /** Autopiloto fase 5: aprender de tu uso (solo contadores de comandos de verificación escritos a mano; propone, nunca activa solo) */
   autopilotLearn: true,
   /** Ventana de contexto en tokens (0 = automática según el modelo). El historial se compacta para que quepa */

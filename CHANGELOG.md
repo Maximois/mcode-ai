@@ -30,6 +30,15 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 - "formateá el proyecto": usa el script `format` o prettier ya instalado (nunca descarga nada), hace un snapshot ANTES y si el snapshot falla no toca nada; informa qué cambió
 - `scripts/test-project-checkup.mjs` (48 comprobaciones) y 29 casos nuevos en el asistente local, enganchados a `npm run verify`
 
+### 🎯 Enfocador local (superasistente, fase A)
+- Antes de llamar a la IA, el editor decide **sin gastar tokens** qué archivos y líneas importan para tu pedido en lenguaje natural y se los pasa como pista (`src/focus.js`). Reemplaza la búsqueda que usaba la frase completa como texto literal
+- Entiende el pedido: quita palabras vacías y verbos de pedido, separa identificadores (`NotificationToast` → notification, toast), compara por raíz (alertas/alert, notificación/notification) y expande sinónimos español↔inglés de UI ("cajita", "alertas" → card, toast, notification…)
+- Puntúa por nombre de archivo y carpeta, símbolos (funciones, clases, selectores CSS), y contenido con peso por rareza de la palabra; con topes para que un archivo enorme no gane solo por tamaño
+- Dice qué tan seguro está (alta / media / baja / ninguna) y por qué eligió cada archivo. Si la mayor parte del pedido no existe en el proyecto, o solo coinciden palabras genéricas, no inspira confianza y todo sigue como antes
+- Solo se inyecta como pista cuando la confianza es media o alta; la IA debe verificar con `readFile` antes de editar. Se puede apagar en Ajustes ("Enfocador local")
+- `scripts/test-focus.mjs` (93 comprobaciones, 24 mutaciones probadas) enganchado a `npm run verify`
+- Límite conocido: elige archivos y líneas, todavía no recorta bloques (fase B); en archivos muy grandes el ahorro real de tokens llegará con ese recorte
+
 ### 🖼 Optimizador de imágenes (Herramientas locales → Mantenimiento)
 - Genera `foto.min.jpg` / `logo.min.png` junto a cada JPG/PNG, reduciendo el ancho máximo (2560/2000/1600/1280 o sin cambiar) y con calidad JPEG elegible. Usa el `nativeImage` que ya trae Electron: **sin dependencias nativas** (se descartó `sharp`)
 - No modifica ni borra los originales y nunca pisa un `.min.*` existente. Omite las JPEG con rotación EXIF y los PNG animados; cada resultado se decodifica de nuevo y se comprueba su tamaño antes de escribirse, y solo se guarda si ahorra al menos 5%

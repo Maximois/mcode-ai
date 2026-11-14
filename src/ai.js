@@ -2248,7 +2248,7 @@ export async function analyzeProjectRelevance({ projectFiles, userQuestion, open
 
 // ── buildMessages: construye el contexto con presupuesto de tokens ────────────
 
-export function buildMessages({ projectFiles, activeFile, activeContent, memories, history, relevantFiles, searchResults, projectSearchResults, devLogs, webPageIntel = null, tokenBudget = 8000, systemPrompt, agentMode = false, projectMeta = null, ctxNotes = null, stateBlock = '' }) {
+export function buildMessages({ projectFiles, activeFile, activeContent, memories, history, relevantFiles, searchResults, projectSearchResults, devLogs, webPageIntel = null, tokenBudget = 8000, systemPrompt, agentMode = false, projectMeta = null, ctxNotes = null, stateBlock = '', focusBlock = '' }) {
   const msgs = []
   let usedTokens = 0
 
@@ -2410,6 +2410,8 @@ REGLAS:
       String.fromCharCode(96).repeat(3) + '\n' + idx + '\n' + String.fromCharCode(96).repeat(3)
     ctxParts.push(block)
     usedTokens += estimateTokens(block)
+    // Enfoque local (sin IA): dónde mirar primero, con líneas exactas. Es una pista, no reemplaza leer el archivo
+    if (focusBlock) { ctxParts.push(focusBlock); usedTokens += estimateTokens(focusBlock) }
 
     // ── Archivos relevantes adicionales (sí tienen límite de presupuesto) ──
     const toInclude = relevantFiles?.filter(r => r !== activeFile).slice(0, 5) || []

@@ -98,6 +98,14 @@ console.log('[1i] Optimizador de imagenes (logica y seguridad)')
   else console.log((r.stdout || '').trimEnd())
 }
 
+// 1j) Enfocador local (src/focus.js): pedido en lenguaje natural -> archivos/lineas, sin inventar cuando no hay evidencia
+console.log('[1j] Enfocador local (intencion, sinonimos, confianza)')
+{
+  const r = spawnSync(process.execPath, ['--no-warnings', join(root, 'scripts', 'test-focus.mjs')], { encoding: 'utf8' })
+  if (r.status !== 0) { failed++; console.error((r.stderr || r.stdout || '').trim().split('\n').slice(-20).join('\n')) }
+  else console.log((r.stdout || '').trimEnd())
+}
+
 // 2) Build real del renderer (detecta errores de JSX, imports rotos, etc.)
 if (quick) {
   console.log('[2/2] Build de vite: omitido (--quick)')
