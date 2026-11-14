@@ -30,6 +30,12 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 - "formateá el proyecto": usa el script `format` o prettier ya instalado (nunca descarga nada), hace un snapshot ANTES y si el snapshot falla no toca nada; informa qué cambió
 - `scripts/test-project-checkup.mjs` (48 comprobaciones) y 29 casos nuevos en el asistente local, enganchados a `npm run verify`
 
+### 🤖 Autopiloto (fase 5): aprende de tu uso, sin IA
+- Si escribís a mano en la terminal del editor el mismo comando de verificación (test, lint, typecheck…) 3 veces, el autopiloto lo propone para la verificación automática que corre tras aplicar cambios. Solo se agrega si respondés **"agregá lo sugerido"** (o **"ignorá la sugerencia"**); **"qué aprendiste"** muestra los contadores y **"olvidá mis hábitos"** borra todo y quita las verificaciones extra
+- Privacidad: solo se cuentan comandos de una lista blanca estricta (sin cadenas, redirecciones, `--fix`/`--write`, modo watch ni scripts de dev/start/build); cualquier otro comando se descarta en el acto sin guardar su texto. Los proyectos se identifican con un hash, no con la ruta, y nunca se guardan contenidos de archivos ni del chat. Todo vive en este equipo (localStorage)
+- Defensa en profundidad: lo guardado se revalida al leerlo y otra vez antes de ejecutarse, así que un valor manipulado en el almacenamiento no puede correr nada que no sea una verificación conocida
+- Opción en Ajustes para apagar el aprendizaje; `scripts/test-habits.mjs` (103 comprobaciones, con entradas hostiles) enganchado a `npm run verify`
+
 ### 🛡 Agente: contexto fiable y freno de mano
 - Modo de parches **Manual por defecto** (botón ✋ Manual / ⚡ Auto en el chat y opción en Ajustes): los PATCH/WRITE/CREATE y los RUN esperan tu clic en Aplicar. En Auto, un parche sobre un archivo que el agente no leyó en ese turno se rechaza y se le pide leerlo primero (en Manual solo se avisa)
 - Índice del proyecto siempre presente y honesto: avisa cuando es parcial (tope de archivos/tamaño/profundidad), lista los archivos que quedaron sin contenido y pasa a formato compacto si no entra en el presupuesto
