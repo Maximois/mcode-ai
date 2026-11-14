@@ -9,6 +9,7 @@ import {
 import { useSettings } from './hooks/useSettings.js'
 import { contextWindowFor, promptBudgetFor, findUnreadTargets, normRel } from './agentContext.js'
 import { pickChecks, evaluateCheck, formatReport, errorForAI, buildStateBlock } from './autopilot.js'
+import { projectKey, loadState, emptyState, recordCommand, suggestionFor, acceptCommand, dismissCommand, acceptedChecks, forgetProject, formatSuggestion, describeHabits, formatAccept, formatDismiss, formatForget, NO_PENDING } from './habits.js'
 import { PROBE_NAMES, recommendGitignore, detectFormatter, buildCheckup, formatGitignoreResult, formatFormatResult } from './projectCheckup.js'
 import { matchIntent, helpText, formatGitStatus, formatErrors, formatSecrets, formatSnapshot, formatJunk, formatUndo, LOCAL_TAG } from './localAssistant.js'
 import { useTabs, getLang } from './hooks/useTabs.js'
@@ -853,6 +854,7 @@ function ChatPanel({ settings, updateSettings, setPipelineStage, tabs, activeTab
         reply(formatGitignoreResult(recs, res))
       }
       else if (intent === 'format') reply(await localOps.format())
+      else if (['habits', 'habit_accept', 'habit_dismiss', 'habit_forget'].includes(intent)) reply(await localOps.habit(intent))
       else if (intent === 'tests') await localOps?.runChecks?.()          // la tarjeta de resultado la agrega el autopiloto
       else if (intent === 'undo') {
         const r = await localOps?.undoLast?.()
@@ -1664,6 +1666,11 @@ function SettingsModal({ settings, updateSettings, setApiKey, setModel, setPipel
               <input type="checkbox" checked={settings.localAssistant !== false}
                 onChange={e => updateSettings({ localAssistant: e.target.checked })} />
               <span>Asistente local: resolver sin IA pedidos obvios ("corré los tests", "qué cambió", "deshacé el último cambio"…). Escribí "ayuda" para ver la lista</span>
+            </label>
+            <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+              <input type="checkbox" checked={settings.autopilotLearn !== false}
+                onChange={e => updateSettings({ autopilotLearn: e.target.checked })} />
+              <span>Autopiloto: aprender de tu uso (cuenta solo comandos de test/lint que escribís en la terminal y propone sumarlos a la verificación; no guarda contenidos)</span>
             </label>
             <label className="settings-row" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
               <input type="checkbox" checked={!!settings.autoApplyAiRun}
@@ -2667,6 +2674,15 @@ function App() {
   const reportSinkRef = useRef(null)   // lo completa ChatPanel: agrega la tarjeta de resultado al chat
   // Fuentes del "estado automático" que se adjunta a cada pregunta (errores actuales + última verificación)
   const autoStateRef = useRef({ problems: {}, lastCheck: null })
+  // Autopiloto fase 5: lo aprendido (solo contadores de comandos de verificación) vive en localStorage de este equipo
+  const habitsRef = useRef(null)
+  const getHabits = () => {
+    if (!habitsRef.current) { try { habitsRef.current = loadState(localStorage.getItem('mcap_habits_v1')) } catch { habitsRef.current = emptyState() } }
+    return habitsRef.current
+  }
+  const setHabits = (st) => { habitsRef.current = st; try { localStorage.setItem('mcap_habits_v1', JSON.stringify(st)) } catch { /* sin almacenamiento: queda en memoria */ } }
+  const habitPendingRef = useRef(null)          // sugerencia esperando respuesta: { cmd, n }
+  const habitPostedRef = useRef(new Set())      // comandos ya sugeridos en esta sesión (no se repite)
   autoStateRef.current.problems = localProblems
   const runAutopilotChecks = useCallback(async (actions, opts = {}) => {
     // opts.force: pedido explícito del usuario ("corré los tests"): ignora el ajuste y no exige haber tocado código
@@ -2678,7 +2694,7 @@ function App() {
       const root = rootDir.replace(/\\/g, '/').replace(/\/$/, '')
       const pk = await window.api.readFile(root + '/package.json')
       const scripts = pk.ok ? (JSON.parse(pk.content || '{}')?.scripts || {}) : {}
-      const checks = pickChecks(scripts)
+      const checks = pickChecks(scripts, acceptedChecks(getHabits(), projectKey(rootDir)))
       if (!checks.length) {
         if (opts.force) reportSinkRef.current?.('ℹ️ Este proyecto no define scripts `verify`, `test` ni `lint` en su `package.json`: no hay nada que correr.')
         return ''
@@ -2740,6 +2756,26 @@ function App() {
     const git = ev.ok ? await window.api.ctxGitSummary?.(rootDir).catch(() => null) : null
     return formatFormatResult({ formatter: facts.formatter, snapshot: snap, ok: ev.ok, timedOut: ev.timedOut, summary: ev.summary, git })
   }, [rootDir, collectProjectFacts, markCodeChanged])
+
+  // Autopiloto fase 5: aceptar / ignorar / ver / olvidar lo aprendido (responde con el texto para el chat)
+  const habitOp = useCallback(async (intent) => {
+    const key = projectKey(rootDir)
+    const pending = habitPendingRef.current
+    if (intent === 'habits') return describeHabits(getHabits(), key)
+    if (intent === 'habit_forget') {
+      setHabits(forgetProject(getHabits(), key)); habitPendingRef.current = null; habitPostedRef.current = new Set()
+      return formatForget()
+    }
+    if (!pending) return NO_PENDING
+    if (intent === 'habit_accept') {
+      const res = acceptCommand(getHabits(), key, pending.cmd)
+      if (res.ok && !res.already) setHabits(res.state)
+      if (res.ok || res.full) habitPendingRef.current = null
+      return formatAccept(res, pending.cmd)
+    }
+    setHabits(dismissCommand(getHabits(), key, pending.cmd)); habitPendingRef.current = null
+    return formatDismiss(pending.cmd)
+  }, [rootDir])
 
   // Asistente local: deshacer el último cambio aplicado por el editor (usa la misma pila de deshacer que la herramienta `undo`)
   const undoLastChange = useCallback(async () => {
@@ -2810,6 +2846,24 @@ function App() {
     if (r.err && r.err !== r.out) setTermLines(p => [...p, { type:'err', text: `${new Date().toLocaleTimeString()} ${String(r.err || '').trim()}` }])
     if (!r.out && !r.err) setTermLines(p => [...p, { type:'info', text: `${new Date().toLocaleTimeString()} Salió con código ${r.code}` }])
     setTermBusy(false)
+    // Autopiloto fase 5: cuenta SOLO comandos de verificación conocidos; el resto se descarta sin guardarse
+    if (settings.autopilotLearn !== false && rootDir) {
+      try {
+        const key = projectKey(rootDir)
+        const rec = recordCommand(getHabits(), key, safeCmd)
+        if (rec.recorded) {
+          setHabits(rec.state)
+          const pk = await window.api.readFile(rootDir.replace(/\\/g, '/').replace(/\/$/, '') + '/package.json')
+          const scripts = pk.ok ? (JSON.parse(pk.content || '{}')?.scripts || {}) : {}
+          const sug = suggestionFor(rec.state, key, { base: pickChecks(scripts).map(c => c.command) })
+          if (sug && !habitPostedRef.current.has(sug.cmd.toLowerCase())) {
+            habitPostedRef.current.add(sug.cmd.toLowerCase())
+            habitPendingRef.current = sug
+            reportSinkRef.current?.(formatSuggestion(sug))
+          }
+        }
+      } catch (e) { console.warn('[AUTOPILOT-HABITS]', e) }
+    }
   }
 
   const installDependencies = async (tool) => {
@@ -3422,7 +3476,7 @@ function App() {
             onApplyAction={applyAction}
             reportSinkRef={reportSinkRef}
             autoStateRef={autoStateRef}
-            localOps={{ runChecks: () => runAutopilotChecks([], { force: true }), undoLast: undoLastChange, facts: collectProjectFacts, format: runFormat }}
+            localOps={{ runChecks: () => runAutopilotChecks([], { force: true }), undoLast: undoLastChange, facts: collectProjectFacts, format: runFormat, habit: habitOp }}
             onApplyAll={applyAll}
             chosenModel={chosenModel}
             setChosenModel={setChosenModel}

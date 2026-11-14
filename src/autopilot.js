@@ -1,16 +1,28 @@
 // Autopiloto (fase 1): lógica PURA y determinista, sin IA ni red. Decide qué verificaciones correr tras aplicar
 // cambios, resume su salida y arma el mensaje corto para el chat y para la IA. Se prueba en scripts/test-autopilot.mjs.
 
+import { isCheckLike, normalizeCommand } from './habits.js'
+
 // Scripts de package.json que cuentan como verificación, en orden. Si existe "verify" (que ya agrupa todo) se usa solo ese.
 const PLACEHOLDER_TEST = /no test specified/i
 
-export function pickChecks(scripts) {
+// extra: verificaciones que el usuario aceptó (fase 5). Se revalidan acá con isCheckLike: lo guardado nunca corre sin pasar el filtro.
+export function pickChecks(scripts, extra = []) {
   const s = scripts && typeof scripts === 'object' ? scripts : {}
   const has = (k) => typeof s[k] === 'string' && s[k].trim() !== ''
-  if (has('verify')) return [{ name: 'verify', command: 'npm run verify' }]
-  const out = []
-  if (has('test') && !PLACEHOLDER_TEST.test(s.test)) out.push({ name: 'test', command: 'npm test' })
-  if (has('lint')) out.push({ name: 'lint', command: 'npm run lint' })
+  let out = []
+  if (has('verify')) out = [{ name: 'verify', command: 'npm run verify' }]
+  else {
+    if (has('test') && !PLACEHOLDER_TEST.test(s.test)) out.push({ name: 'test', command: 'npm test' })
+    if (has('lint')) out.push({ name: 'lint', command: 'npm run lint' })
+  }
+  const seen = new Set(out.map(c => c.command.toLowerCase()))
+  for (const raw of Array.isArray(extra) ? extra : []) {
+    const cmd = normalizeCommand(raw)
+    if (!isCheckLike(cmd) || seen.has(cmd.toLowerCase())) continue
+    seen.add(cmd.toLowerCase())
+    out.push({ name: 'extra', command: cmd })
+  }
   return out
 }
 

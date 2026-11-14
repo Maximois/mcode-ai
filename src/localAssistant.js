@@ -16,6 +16,10 @@ export const INTENT_LABELS = {
   suggest: 'Chequeo del proyecto: qué se puede mejorar de forma mecánica',
   gitignore: 'Completar el .gitignore con lo que falta (solo agrega líneas)',
   format: 'Formatear el proyecto con su formateador (con snapshot previo)',
+  habit_accept: 'Aceptar la sugerencia pendiente del autopiloto',
+  habit_dismiss: 'Ignorar la sugerencia pendiente del autopiloto',
+  habits: 'Ver qué aprendió el autopiloto de tu uso (solo contadores)',
+  habit_forget: 'Olvidar lo aprendido y quitar las verificaciones extra',
   help: 'Mostrar esta ayuda',
 }
 
@@ -50,6 +54,11 @@ const RULES = [
   ['gitignore', /^(?:agrega|agregar|suma|sumar)\s+(?:lo que falta|los faltantes|lo faltante)\s+(?:al|en el)\s+gitignore$/],
   ['format', /^(?:formatea|formatear|formateame)(?:\s+(?:el\s+)?(?:proyecto|codigo|todo))?$/],
   ['format', /^(?:corre|correr|ejecuta|ejecutar)\s+(?:prettier|el formateador)$/],
+  ['habit_accept', /^(?:agrega|agregar|acepta|aceptar|activa|activar)\s+(?:la |lo )?(?:sugerido|sugerencia|sugerida)$/],
+  ['habit_dismiss', /^(?:ignora|ignorar|descarta|descartar|rechaza|rechazar)\s+(?:la |lo )?(?:sugerido|sugerencia|sugerida)$/],
+  ['habits', /^(?:que aprendiste|mis habitos|que habitos tenes|que sabes de mi proyecto|verificaciones extra)$/],
+  ['habit_forget', /^(?:olvida|olvidar|borra|borrar|reinicia|reiniciar)\s+(?:mis |los )?habitos$/],
+  ['habit_forget', /^(?:quita|quitar|saca|sacar|elimina|eliminar)\s+(?:las )?verificaciones extra$/],
   ['help', /^(?:ayuda|ayuda del asistente|comandos|comandos locales|asistente local|que podes hacer sin ia|que sabes hacer sin ia)$/],
 ]
 
@@ -77,7 +86,7 @@ export const LOCAL_TAG = '⚙ *Asistente local (sin IA)*'
 export function helpText() {
   const ex = {
     tests: '"corré los tests"', status: '"qué cambió"', errors: '"qué errores hay"', secrets: '"buscá secretos"',
-    snapshot: '"hacé un snapshot"', suggest: '"sugerencias"', gitignore: '"arreglá el gitignore"', format: '"formateá el proyecto"', undo: '"deshacé el último cambio"', junk: '"qué basura hay"', help: '"ayuda"',
+    snapshot: '"hacé un snapshot"', habit_accept: '"agregá lo sugerido"', habit_dismiss: '"ignorá la sugerencia"', habits: '"qué aprendiste"', habit_forget: '"olvidá mis hábitos"', suggest: '"sugerencias"', gitignore: '"arreglá el gitignore"', format: '"formateá el proyecto"', undo: '"deshacé el último cambio"', junk: '"qué basura hay"', help: '"ayuda"',
   }
   return `${LOCAL_TAG}\nPuedo resolver sin IA (y sin gastar tokens) estos pedidos cuando el mensaje es solo eso:\n` +
     Object.entries(INTENT_LABELS).map(([k, v]) => `- ${v} — ${ex[k]}`).join('\n') +

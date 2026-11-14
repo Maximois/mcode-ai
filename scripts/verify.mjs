@@ -82,6 +82,14 @@ console.log('[1g] Rutinas mecanicas (gitignore, formateador, chequeo)')
   else console.log((r.stdout || '').trimEnd())
 }
 
+// 1h) Aprende de tu uso (src/habits.js): solo comandos de verificacion seguros, lo guardado nunca ejecuta otra cosa
+console.log('[1h] Habitos (lista blanca de comandos, contadores, entrada hostil)')
+{
+  const r = spawnSync(process.execPath, ['--no-warnings', join(root, 'scripts', 'test-habits.mjs')], { encoding: 'utf8' })
+  if (r.status !== 0) { failed++; console.error((r.stderr || r.stdout || '').trim().split('\n').slice(-20).join('\n')) }
+  else console.log((r.stdout || '').trimEnd())
+}
+
 // 2) Build real del renderer (detecta errores de JSX, imports rotos, etc.)
 if (quick) {
   console.log('[2/2] Build de vite: omitido (--quick)')

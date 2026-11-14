@@ -19,6 +19,10 @@ const yes = {
   suggest: ['sugerencias', 'Sugerencias automáticas', 'diagnóstico del proyecto', 'chequeo', 'checkup', 'qué mejoras automáticas hay'],
   gitignore: ['arreglá el gitignore', 'completá el .gitignore', 'actualizá el gitignore', 'agregá lo que falta al gitignore', 'por favor arreglá mi gitignore'],
   format: ['formateá el proyecto', 'formatear', 'formateá el código', 'formateá todo', 'corré prettier', 'ejecutá el formateador'],
+  habit_accept: ['agregá lo sugerido', 'aceptá la sugerencia', 'activá la sugerencia', 'por favor agregá lo sugerido'],
+  habit_dismiss: ['ignorá la sugerencia', 'descartá lo sugerido', 'rechazá la sugerencia'],
+  habits: ['qué aprendiste', 'mis hábitos', 'qué hábitos tenés', 'verificaciones extra'],
+  habit_forget: ['olvidá mis hábitos', 'borrá los hábitos', 'reiniciá mis hábitos', 'quitá las verificaciones extra', 'sacá las verificaciones extra'],
   help: ['ayuda', 'comandos', 'qué podés hacer sin ia', 'asistente local'],
 }
 for (const [intent, list] of Object.entries(yes)) for (const t of list) eq(L.matchIntent(t), intent, `reconoce "${t}"`)
@@ -35,6 +39,7 @@ const no = [
   'verificá que el login funcione', 'verificá si hay un bug en el parser', 'corré el servidor', 'ejecutá el proyecto', 'corré npm install',
   'qué cambió?\ny después explicame', 'corré los tests ```js\nfoo()\n```', '', '   ', 'x'.repeat(300),
   'formateá este archivo', 'formateá la fecha en JS', 'formateá el proyecto con tabs de 4', 'formateá el código y corré los tests', 'arreglá el gitignore para que ignore .env', 'agregá node_modules al gitignore', 'arreglá el gitignore y hacé commit', 'sugerencias para mejorar el rendimiento', 'chequeo médico', 'diagnóstico del error', 'revisá el proyecto', 'qué me recomendás',
+  'sí', 'sí, agregalo', 'dale agregalo', 'agregá la sugerencia de arquitectura', 'ignorá la sugerencia de Juan', 'agregá lo sugerido y corré los tests', 'olvidá todo', 'olvidá mi contraseña', 'borrá los hábitos de lectura del usuario en la base de datos', 'qué aprendiste hoy en la reunión', 'hábitos', 'qué es un hábito en JS', 'agregá verificaciones extra al README',
   'qué pasa si corro los tests', 'no corras los tests', 'nunca hagas un snapshot', 'ya corrí los tests',
 ]
 for (const t of no) eq(L.matchIntent(t), null, `NO intercepta "${String(t).slice(0, 50).replace(/\n/g, '\\n')}"`)

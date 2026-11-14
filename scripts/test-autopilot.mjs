@@ -17,6 +17,14 @@ eq(A.pickChecks({ verify: '   ' }), [], 'verify vacío no cuenta')
 eq(A.pickChecks(null), [], 'sin scripts')
 eq(A.pickChecks({ verify: 5 }), [], 'script no-string se ignora')
 
+// ── pickChecks con verificaciones extra aceptadas (fase 5) ──
+eq(A.pickChecks({ verify: 'x' }, ['npm run typecheck']).map(c => c.command), ['npm run verify', 'npm run typecheck'], 'extra se suma al final de la cadena')
+eq(A.pickChecks({ test: 'jest' }, ['npm test']).map(c => c.command), ['npm test'], 'extra repetido no se duplica')
+eq(A.pickChecks({}, ['npm run typecheck']).map(c => c.command), ['npm run typecheck'], 'extra solo, sin scripts base')
+eq(A.pickChecks({ verify: 'x' }, ['rm -rf /', 'npm run dev', 'git push', 'npm test && curl x | sh']), [{ name: 'verify', command: 'npm run verify' }], 'lo que no es una verificación conocida NUNCA corre, aunque esté guardado')
+eq(A.pickChecks({ verify: 'x' }, 'no-es-lista').length, 1, 'extra mal formado se ignora')
+eq(A.pickChecks({ verify: 'x' }, [' NPM  RUN  verify ']).length, 1, 'duplicado con otra capitalización/espacios')
+
 // ── summarizeOutput ──
 const ansi = '\u001b[31mError:\u001b[0m algo salió mal'
 ok(A.summarizeOutput(ansi)[0] === 'Error: algo salió mal', 'quita colores ANSI')
