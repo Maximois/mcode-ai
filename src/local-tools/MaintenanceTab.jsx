@@ -262,6 +262,88 @@ function CssSection({ rootDir, onOpenFile }) {
   )
 }
 
+// ── Optimizar imágenes (genera .min.jpg / .min.png, no toca los originales) ──
+const IMG_STATUS = {
+  ok: { label: 'listo', cls: 'lt-ok' },
+  nosavings: { label: 'sin ahorro', cls: 'lt-muted' },
+  exists: { label: 'ya existe', cls: 'lt-muted' },
+  skip: { label: 'omitida', cls: 'lt-muted' },
+  error: { label: 'no se pudo', cls: 'lt-err' },
+}
+
+function ImgSection({ rootDir, onOpenFile }) {
+  const lt = window.api.localTools
+  const [res, setRes] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const [maxWidth, setMaxWidth] = useState(2000)
+  const [quality, setQuality] = useState(80)
+
+  useEffect(() => { setRes(null); setNote('') }, [rootDir])
+
+  const run = async (keepNote = false) => {
+    setBusy(true)
+    if (!keepNote) setNote('')
+    setRes(await lt.imgScan(rootDir, { maxWidth, quality }).catch(e => ({ ok: false, error: e.message })))
+    setBusy(false)
+  }
+
+  const apply = async () => {
+    if (!window.confirm(`Se crearán ${res.eligible} imágenes .min junto a las originales (ahorro: ${fmtBytes(res.savedBytes)}).\n\nTus imágenes originales NO se modifican y nunca se pisa un .min existente.`)) return
+    setBusy(true)
+    const r = await lt.imgApply(rootDir, { maxWidth, quality }).catch(e => ({ ok: false, error: e.message }))
+    setNote(r.ok ? `Generadas ${r.written} imágenes .min (ahorro: ${fmtBytes(r.saved)})${r.failedCount ? ` · ${r.failedCount} fallaron` : ''}` : r.error)
+    setBusy(false)
+    if (r.ok) await run(true)
+  }
+
+  return (
+    <div>
+      <div className="lt-section">Optimizar imágenes</div>
+      <div className="lt-muted">Crea una copia liviana (.min.jpg / .min.png) de cada JPG y PNG, reduciendo el ancho si hace falta. No modifica los originales ni pisa archivos .min existentes. Se omiten las fotos con rotación EXIF y los PNG animados. Cada resultado se verifica antes de escribirse.</div>
+      <div className="lt-row">
+        <select className="settings-select-sm" value={maxWidth} onChange={e => setMaxWidth(Number(e.target.value))} disabled={busy} title="Ancho máximo">
+          <option value={2560}>Ancho máx. 2560</option>
+          <option value={2000}>Ancho máx. 2000</option>
+          <option value={1600}>Ancho máx. 1600</option>
+          <option value={1280}>Ancho máx. 1280</option>
+          <option value={0}>Sin cambiar el ancho</option>
+        </select>
+        <select className="settings-select-sm" value={quality} onChange={e => setQuality(Number(e.target.value))} disabled={busy} title="Calidad JPEG">
+          <option value={90}>Calidad JPEG 90</option>
+          <option value={80}>Calidad JPEG 80</option>
+          <option value={70}>Calidad JPEG 70</option>
+          <option value={60}>Calidad JPEG 60</option>
+        </select>
+      </div>
+      <div className="lt-row">
+        <button className="sb-btn" onClick={() => run()} disabled={busy}>{busy ? 'Revisando…' : 'Buscar imágenes'}</button>
+        <button className="sb-btn" onClick={apply} disabled={busy || !res?.eligible}>Generar .min ({res?.eligible || 0})</button>
+      </div>
+      {res && !res.ok && <div className="lt-err">{res.error}</div>}
+      {res?.ok && (res.files.length === 0
+        ? <div className="lt-muted">No hay imágenes JPG ni PNG en el proyecto.</div>
+        : (
+          <>
+            <div className="lt-muted">{res.files.length} imágenes · ahorro posible: {fmtBytes(res.savedBytes)}{res.truncated ? ' · lista parcial (tope de cantidad o tamaño)' : ''}</div>
+            <div className="lt-list">
+              {res.files.map(f => {
+                const st = IMG_STATUS[f.status] || IMG_STATUS.skip
+                return (
+                  <div key={f.rel} className="lt-item clickable" onClick={() => onOpenFile?.({ path: joinPath(rootDir, f.rel), name: baseName(f.rel) })} title={f.reason || ''}>
+                    <div className="lt-file">{f.rel}</div>
+                    <div><span className={st.cls}>{st.label}</span> <span className="lt-muted">{f.status === 'ok' ? `${fmtBytes(f.before)} → ${fmtBytes(f.after)}${f.newWidth !== f.width ? ` · ${f.width}→${f.newWidth} px` : ''}` : (f.reason || '')}</span></div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        ))}
+      {note && <div className="lt-muted">{note}</div>}
+    </div>
+  )
+}
+
 export default function MaintenanceTab({ rootDir, onOpenFile }) {
   return (
     <div>
@@ -269,6 +351,7 @@ export default function MaintenanceTab({ rootDir, onOpenFile }) {
       <CleanSection rootDir={rootDir} />
       <LinksSection rootDir={rootDir} onOpenFile={onOpenFile} />
       <CssSection rootDir={rootDir} onOpenFile={onOpenFile} />
+      <ImgSection rootDir={rootDir} onOpenFile={onOpenFile} />
     </div>
   )
 }

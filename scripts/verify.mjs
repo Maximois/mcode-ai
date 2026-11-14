@@ -90,6 +90,14 @@ console.log('[1h] Habitos (lista blanca de comandos, contadores, entrada hostil)
   else console.log((r.stdout || '').trimEnd())
 }
 
+// 1i) Optimizador de imagenes (electron/local-tools/imgmin.js) con nativeImage falso: originales intactos, EXIF/APNG, verificacion
+console.log('[1i] Optimizador de imagenes (logica y seguridad)')
+{
+  const r = spawnSync(process.execPath, ['--no-warnings', join(root, 'scripts', 'test-imgmin.mjs')], { encoding: 'utf8' })
+  if (r.status !== 0) { failed++; console.error((r.stderr || r.stdout || '').trim().split('\n').slice(-20).join('\n')) }
+  else console.log((r.stdout || '').trimEnd())
+}
+
 // 2) Build real del renderer (detecta errores de JSX, imports rotos, etc.)
 if (quick) {
   console.log('[2/2] Build de vite: omitido (--quick)')

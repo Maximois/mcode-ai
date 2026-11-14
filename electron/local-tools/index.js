@@ -18,6 +18,10 @@ const semver = require('./semver')
 const cleaner = require('./cleaner')
 const linkcheck = require('./linkcheck')
 const cssmin = require('./cssmin')
+const imgmin = require('./imgmin')
+
+// nativeImage solo existe dentro de Electron; se pide en el momento de usarlo (y se inyecta para poder probar sin Electron)
+const getNativeImage = () => { try { return require('electron').nativeImage } catch { return null } }
 
 function insideRoot(root, p) {
   const r = path.resolve(root)
@@ -109,6 +113,8 @@ function registerLocalTools(ipcMain, { app }) {
   ipcMain.handle('lt-links-scan',      wrap(({ root }) => linkcheck.scanLinks(needRoot(root))))
   ipcMain.handle('lt-css-scan',        wrap(({ root }) => cssmin.scanCss(needRoot(root))))
   ipcMain.handle('lt-css-apply',       wrap(({ root }) => cssmin.applyCss(needRoot(root))))
+  ipcMain.handle('lt-img-scan',        wrap(({ root, opts }) => imgmin.scanImages(needRoot(root), opts, getNativeImage())))
+  ipcMain.handle('lt-img-apply',       wrap(({ root, opts }) => imgmin.applyImages(needRoot(root), opts, getNativeImage())))
 
   ipcMain.handle('lt-ollama-status',   wrap((a) => writer.status(a)))
   ipcMain.handle('lt-writer-commit',   wrap(({ root, url, model }) => writer.commitMessage({ root: needRoot(root), url, model })))

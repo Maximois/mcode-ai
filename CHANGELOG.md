@@ -30,6 +30,12 @@ y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 - "formateá el proyecto": usa el script `format` o prettier ya instalado (nunca descarga nada), hace un snapshot ANTES y si el snapshot falla no toca nada; informa qué cambió
 - `scripts/test-project-checkup.mjs` (48 comprobaciones) y 29 casos nuevos en el asistente local, enganchados a `npm run verify`
 
+### 🖼 Optimizador de imágenes (Herramientas locales → Mantenimiento)
+- Genera `foto.min.jpg` / `logo.min.png` junto a cada JPG/PNG, reduciendo el ancho máximo (2560/2000/1600/1280 o sin cambiar) y con calidad JPEG elegible. Usa el `nativeImage` que ya trae Electron: **sin dependencias nativas** (se descartó `sharp`)
+- No modifica ni borra los originales y nunca pisa un `.min.*` existente. Omite las JPEG con rotación EXIF y los PNG animados; cada resultado se decodifica de nuevo y se comprueba su tamaño antes de escribirse, y solo se guarda si ahorra al menos 5%
+- Se procesa de a una imagen cediendo el turno entre archivos, con topes de cantidad (300), tamaño por archivo (25 MB) y bytes por corrida (400 MB); vista previa con ahorro real antes de generar
+- `scripts/test-imgmin.mjs` (44 comprobaciones, con un `nativeImage` falso inyectado) enganchado a `npm run verify`. Nota: no valida la calidad del codificador real de Electron
+
 ### 🤖 Autopiloto (fase 5): aprende de tu uso, sin IA
 - Si escribís a mano en la terminal del editor el mismo comando de verificación (test, lint, typecheck…) 3 veces, el autopiloto lo propone para la verificación automática que corre tras aplicar cambios. Solo se agrega si respondés **"agregá lo sugerido"** (o **"ignorá la sugerencia"**); **"qué aprendiste"** muestra los contadores y **"olvidá mis hábitos"** borra todo y quita las verificaciones extra
 - Privacidad: solo se cuentan comandos de una lista blanca estricta (sin cadenas, redirecciones, `--fix`/`--write`, modo watch ni scripts de dev/start/build); cualquier otro comando se descarta en el acto sin guardar su texto. Los proyectos se identifican con un hash, no con la ruta, y nunca se guardan contenidos de archivos ni del chat. Todo vive en este equipo (localStorage)
